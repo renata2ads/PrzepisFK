@@ -30,6 +30,10 @@ const odIndex = args.indexOf("--od");
 const FROM = odIndex >= 0 ? new Date(args[odIndex + 1]) : null; // uzupełnienie wsteczne
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL ?? "haiku"; // haiku oszczędza limit Pro
 const REASSESS = args.includes("--przeocen");
+const etapIndex = args.indexOf("--etap");
+const STAGE_FILTER = etapIndex >= 0 ? args[etapIndex + 1] : null; // np. --przeocen --etap act
+const frazaIndex = args.indexOf("--fraza");
+const PHRASE_FILTER = frazaIndex >= 0 ? args[frazaIndex + 1]?.replace(/[%,()*\\]/g, "") : null; // np. --przeocen --fraza JPK
 const NOTIFY_ONLY = args.includes("--powiadomienia"); // tylko Discord i e-mail, bez pobierania
 
 // Wstępny filtr (bez AI): wpis musi zawierać choć jedno z tych słów.
@@ -78,6 +82,7 @@ type Candidate = {
   publishedAt: Date | null;
   text: string;
   stage: Stage;
+  effectiveDate?: string | null; // z API Dziennika Ustaw — pewniejsza niż ocena AI
 };
 type AiResult = {
   title?: string;
@@ -196,7 +201,24 @@ function stripHtml(html: string) {
 }
 
 // Gdy kanał nie podaje treści (np. Infor), bierzemy z artykułu tylko jego opis (meta description)
+// Akt z Dziennika Ustaw: data wejścia w życie z API ELI (lista aktów jej nie zawiera)
+async function eliEntryIntoForce(c: Candidate) {
+  const m = c.url.match(/dziennikustaw\.gov\.pl\/DU\/(\d{4})\/(\d+)/);
+  if (!m) return;
+  try {
+    const res = await fetch(`https://api.sejm.gov.pl/eli/acts/DU/${m[1]}/${m[2]}`, { signal: AbortSignal.timeout(15000) });
+    const act = (await res.json()) as { entryIntoForce?: string };
+    if (act.entryIntoForce) {
+      c.effectiveDate = act.entryIntoForce;
+      c.text = `${c.text} Data wejścia w życie: ${act.entryIntoForce}.`;
+    }
+  } catch {
+    // bez daty — AI oceni po treści
+  }
+}
+
 async function enrichText(c: Candidate) {
+  await eliEntryIntoForce(c);
   if (c.source.kind === "page") {
     c.text = (await readUrl(c.url)).text;
     return;
@@ -312,7 +334,7 @@ async function saveResult(c: Candidate, ai: AiResult, slugToId: Map<string, numb
     impact_types: (ai.impact_types ?? []).filter(isImpactType).slice(0, 3),
     priority: isPriority(ai.priority ?? "") ? ai.priority : "medium",
     form_link: ai.form ? `https://druki.gofin.pl/search/?search_form[phrase]=${encodeURIComponent(ai.form)}` : null,
-    effective_date: /^\d{4}-\d{2}-\d{2}$/.test(ai.effective_date ?? "") ? ai.effective_date : null,
+    effective_date: c.effectiveDate ?? (/^\d{4}-\d{2}-\d{2}$/.test(ai.effective_date ?? "") ? ai.effective_date : null),
   };
   let id = existingId;
   if (id) {
@@ -415,12 +437,18 @@ async function processSubmissions(manual: Source | undefined, categories: Catego
 
 // Ponowna ocena opublikowanych wpisów nowymi zasadami (np. po zmianie profilu na JST)
 async function reassess(sources: Source[], categories: Category[], slugToId: Map<string, number>) {
-  const { data, error } = await db
+  let req = db
     .from("articles")
     .select("id, url, title, published_at, source_id, stage")
     .eq("status", "done")
     .order("published_at", { ascending: false })
     .limit(LIMIT);
+  if (STAGE_FILTER) req = req.eq("stage", STAGE_FILTER);
+  if (PHRASE_FILTER) {
+    const p = `%${PHRASE_FILTER}%`;
+    req = req.or(`title.ilike.${p},summary.ilike.${p},impact.ilike.${p},system_impact.ilike.${p}`);
+  }
+  const { data, error } = await req;
   if (error) throw error;
   console.log(`Ponowna ocena: ${data.length} opublikowanych wpisów`);
 
