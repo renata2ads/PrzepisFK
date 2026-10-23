@@ -41,7 +41,10 @@ export function SettingsForm({ categories, selected, frequency }: Props) {
               </label>
             ))}
           </div>
-          <p className="mt-2 text-xs text-[#5b6478]">Wysyłka e-maili ruszy w kolejnym etapie projektu.</p>
+          <p className="mt-2 text-xs text-[#5b6478]">
+            Wysyłamy jedno podsumowanie z wpisami z wybranych obszarów — po porannej aktualizacji (ok. 8:00), codziennie
+            albo raz w tygodniu. Każdy e-mail ma link do zmiany ustawień i wypisania się.
+          </p>
         </fieldset>
 
         {state.error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{state.error}</p>}
