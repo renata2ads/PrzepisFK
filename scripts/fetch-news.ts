@@ -2,6 +2,7 @@
 // Uruchomienie: npm run fetch            (domyślnie maks. 20 wpisów)
 //               npm run fetch -- --limit 5 --days 14
 //               npm run fetch -- --przeocen   (ponowna ocena opublikowanych wpisów, np. po zmianie promptu)
+//               npm run fetch -- --powiadomienia   (tylko Discord i e-mail)
 //               npm run fetch -- --od 2026-01-01   (uzupełnienie Dziennika Ustaw i projektów ustaw od tej daty)
 
 import { execFileSync } from "node:child_process";
@@ -11,6 +12,7 @@ import { createClient } from "@supabase/supabase-js";
 import Parser from "rss-parser";
 import { extractText, getDocumentProxy } from "unpdf";
 import { trackedTopicsIn, TRACKED_TOPICS } from "../src/lib/topics";
+import { notify } from "./notify";
 
 // ---------- ustawienia ----------
 
@@ -27,6 +29,7 @@ const odIndex = args.indexOf("--od");
 const FROM = odIndex >= 0 ? new Date(args[odIndex + 1]) : null; // uzupełnienie wsteczne
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL ?? "haiku"; // haiku oszczędza limit Pro
 const REASSESS = args.includes("--przeocen");
+const NOTIFY_ONLY = args.includes("--powiadomienia"); // tylko Discord i e-mail, bez pobierania
 
 // Wstępny filtr (bez AI): wpis musi zawierać choć jedno z tych słów.
 // Profil: JST i jednostki budżetowe (urzędy, szkoły, przedszkola, zarządy dróg, MOPS…)
@@ -435,7 +438,7 @@ async function reassess(sources: Source[], categories: Category[], slugToId: Map
 // ---------- przebieg ----------
 
 // Blokada: dwa przebiegi naraz zapisywałyby te same wpisy (np. ręczny + Harmonogram zadań)
-const LOCK = "logs/fetch.lock";
+const LOCK = NOTIFY_ONLY ? "logs/notify.lock" : "logs/fetch.lock";
 
 function acquireLock() {
   if (existsSync(LOCK)) {
@@ -455,6 +458,7 @@ function acquireLock() {
 
 async function main() {
   acquireLock();
+  if (NOTIFY_ONLY) return notify(db);
   console.log(`PrzepisFK: limit ${LIMIT}, ostatnie ${DAYS} dni, model ${CLAUDE_MODEL}`);
 
   const [{ data: sources, error: e1 }, { data: categories, error: e2 }] = await Promise.all([
@@ -518,6 +522,9 @@ async function main() {
   }
 
   console.log(`Gotowe: zapisane ${done}, pominięte przez AI ${skipped}, błędy ${failed}, czeka ${Math.max(queue.length - LIMIT, 0)}.`);
+
+  // 5. Powiadomienia o nowych wpisach
+  await notify(db);
 }
 
 main().catch((err) => {
