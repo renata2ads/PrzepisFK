@@ -9,6 +9,9 @@ export const supabase = createClient(
 
 export type Category = { id: number; slug: string; name: string };
 
+// news = artykuł prasowy, act = akt prawny (Dziennik Ustaw), draft = projekt przepisu
+export type Stage = "news" | "act" | "draft";
+
 export type Article = {
   id: number;
   url: string;
@@ -18,13 +21,14 @@ export type Article = {
   impact: string | null;
   effective_date: string | null;
   form_link: string | null;
+  stage: Stage;
   sources: { name: string } | null;
   categories: { slug: string; name: string }[];
   article_qa: { question: string; answer: string; sort: number }[];
 };
 
 const ARTICLE_FIELDS =
-  "id, url, title, published_at, summary, impact, effective_date, form_link, sources(name), categories(slug, name), article_qa(question, answer, sort)";
+  "id, url, title, published_at, summary, impact, effective_date, form_link, stage, sources(name), categories(slug, name), article_qa(question, answer, sort)";
 
 export async function getCategories() {
   const { data, error } = await supabase.from("categories").select("id, slug, name").order("sort");
@@ -32,14 +36,16 @@ export async function getCategories() {
   return data as Category[];
 }
 
-type ArticleFilter = { categoryIds?: number[]; articleIds?: number[]; query?: string };
+type ArticleFilter = { categoryIds?: number[]; articleIds?: number[]; query?: string; stages?: Stage[] };
 
-export async function getArticles({ categoryIds, articleIds, query }: ArticleFilter) {
+export async function getArticles({ categoryIds, articleIds, query, stages }: ArticleFilter) {
   let req = supabase
     .from("articles")
     .select(ARTICLE_FIELDS)
     .order("published_at", { ascending: false, nullsFirst: false })
     .limit(50);
+
+  if (stages) req = req.in("stage", stages);
 
   if (categoryIds) {
     const { data: links, error } = await supabase

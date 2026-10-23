@@ -1,5 +1,8 @@
 import { toggleBookmark } from "@/app/ustawienia/actions";
 import type { Article } from "@/lib/supabase";
+import { trackedTopicsIn } from "@/lib/topics";
+
+const STAGE_LABEL = { news: null, act: "Akt prawny", draft: "Projekt — jeszcze nie obowiązuje" } as const;
 
 const dateFmt = new Intl.DateTimeFormat("pl-PL", { day: "numeric", month: "long", year: "numeric" });
 const formatDate = (d: string) => dateFmt.format(new Date(d));
@@ -7,9 +10,25 @@ const formatDate = (d: string) => dateFmt.format(new Date(d));
 // bookmarked: undefined = niezalogowany (bez przycisku zakładki)
 export function ArticleCard({ article, bookmarked }: { article: Article; bookmarked?: boolean }) {
   const qa = [...article.article_qa].sort((a, b) => a.sort - b.sort);
+  const tracked = trackedTopicsIn(`${article.title} ${article.summary ?? ""}`);
+  const stage = STAGE_LABEL[article.stage];
 
   return (
-    <article className="rounded-lg bg-white p-5 shadow-sm ring-1 ring-[#dde1ea] sm:p-6">
+    <article
+      className={`rounded-lg bg-white p-5 shadow-sm sm:p-6 ${tracked.length ? "ring-2 ring-[#c2410c]" : "ring-1 ring-[#dde1ea]"}`}
+    >
+      {(tracked.length > 0 || stage) && (
+        <div className="mb-2 flex flex-wrap gap-2 text-xs font-bold uppercase tracking-wide">
+          {tracked.map((t) => (
+            <span key={t} className="rounded bg-[#c2410c] px-2 py-0.5 text-white">★ {t}</span>
+          ))}
+          {stage && (
+            <span className={`rounded px-2 py-0.5 ${article.stage === "draft" ? "bg-amber-100 text-amber-900" : "bg-[#14213d] text-white"}`}>
+              {stage}
+            </span>
+          )}
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#5b6478]">
         {article.published_at && <time dateTime={article.published_at}>{formatDate(article.published_at)}</time>}
         {article.sources && <span>· {article.sources.name}</span>}
@@ -38,7 +57,8 @@ export function ArticleCard({ article, bookmarked }: { article: Article; bookmar
       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm">
         {article.effective_date && (
           <span>
-            <b>Wchodzi w życie:</b> {formatDate(article.effective_date)}
+            <b>{article.stage === "draft" ? "Planowane wejście w życie:" : "Wchodzi w życie:"}</b>{" "}
+            {formatDate(article.effective_date)}
           </span>
         )}
         {article.form_link && (
