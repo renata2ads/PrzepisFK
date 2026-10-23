@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { createClient } from "@supabase/supabase-js";
 import Parser from "rss-parser";
+import { extractText, getDocumentProxy } from "unpdf";
 import { trackedTopicsIn, TRACKED_TOPICS } from "../src/lib/topics";
 
 // ---------- ustawienia ----------
@@ -62,7 +63,7 @@ const db = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false
 
 // ---------- typy ----------
 
-type Source = { id: number; name: string; url: string; kind: "rss" | "eli" | "sejm" };
+type Source = { id: number; name: string; url: string; kind: "rss" | "eli" | "sejm" | "manual" };
 type Stage = "news" | "act" | "draft";
 type Category = { id: number; slug: string; name: string };
 type Candidate = {
@@ -74,6 +75,7 @@ type Candidate = {
   stage: Stage;
 };
 type AiResult = {
+  title?: string;
   relevant: boolean;
   categories: string[];
   summary: string;
@@ -183,6 +185,7 @@ ${categories.map((k) => `- ${k.slug}: ${k.name}`).join("\n")}
 
 Zwróć JSON:
 {
+  "title": "krótki, rzeczowy tytuł po polsku (do 120 znaków)",
   "relevant": true/false — true TYLKO gdy wpis ma praktyczne znaczenie dla JST lub jednostki budżetowej: rachunkowość budżetowa, sprawozdawczość (Rb, bilans), budżet i WPF, klasyfikacja budżetowa, finanse publiczne, VAT i KSeF w JST (centralizacja VAT), podatki i opłaty lokalne (JST jako organ podatkowy), płace i ZUS w sferze budżetowej (JST jako pracodawca), PIT po stronie płatnika (zaliczki od wynagrodzeń, skala i progi, koszty uzyskania, ulgi wpływające na zaliczki, PIT-11, PIT-4R, PIT-8AR, PIT-8C, terminy), oświata (subwencja, wynagrodzenia nauczycieli), zamówienia publiczne, dotacje i środki UE, kontrola RIO/NIK. false dla tematów dotyczących wyłącznie firm (CIT, estoński CIT, ulgi dla przedsiębiorców, JDG, kasy fiskalne), spraw wyłącznie osobistych (PCC, ulgi rozliczane tylko w zeznaniu rocznym podatnika, emerytury), polityki i porad życiowych,
   "categories": ["slug", ...] — 1–2 najlepiej pasujące,
   "summary": "2–3 zdania po polsku: co się zmienia",
@@ -240,7 +243,7 @@ async function saveResult(c: Candidate, ai: AiResult, slugToId: Map<string, numb
   if (!ai.relevant) {
     if (existingId) await db.from("articles").update({ status: "skipped" }).eq("id", existingId);
     else await insertArticle(c, { status: "skipped" });
-    return false;
+    return null;
   }
 
   const fields = {
@@ -266,7 +269,86 @@ async function saveResult(c: Candidate, ai: AiResult, slugToId: Map<string, numb
   await db.from("article_qa").insert(
     ai.qa.slice(0, 3).map((q, sort) => ({ article_id: id, question: q.question, answer: q.answer, sort })),
   );
-  return true;
+  return id!;
+}
+
+// ---------- zgłoszone linki (strona /zglos) ----------
+
+const SUBMISSIONS_PER_RUN = 10;
+
+// Pobiera treść spod linku: strona HTML (tytuł, opis, tekst) albo PDF
+async function readUrl(url: string) {
+  const res = await fetch(url, { headers: { "User-Agent": "PrzepisFK/1.0" }, signal: AbortSignal.timeout(30000) });
+  if (!res.ok) throw new Error(`strona zwróciła błąd HTTP ${res.status}`);
+  const type = res.headers.get("content-type") ?? "";
+
+  if (type.includes("pdf") || url.toLowerCase().endsWith(".pdf")) {
+    const pdf = await getDocumentProxy(new Uint8Array(await res.arrayBuffer()));
+    const { text } = await extractText(pdf, { mergePages: true });
+    return { title: "", text: text.replace(/\s+/g, " ").slice(0, 8000) };
+  }
+
+  const html = await res.text();
+  const meta = (name: string) =>
+    html.match(new RegExp(`<meta[^>]+(?:property|name)="${name}"[^>]+content="([^"]*)"`, "i"))?.[1] ?? "";
+  const title = meta("og:title") || (html.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1] ?? "");
+  const body = stripHtml(html.replace(/<(script|style|nav|header|footer)[\s\S]*?<\/\1>/gi, " "));
+  return { title: stripHtml(title), text: `${meta("og:description") || meta("description")} ${body}`.slice(0, 8000) };
+}
+
+const stageFor = (url: string): Stage =>
+  /legislacja\.gov\.pl|legislacja\.rcl\.gov\.pl/.test(url) ? "draft" : /dziennikustaw\.gov\.pl|isap\.sejm\.gov\.pl/.test(url) ? "act" : "news";
+
+async function processSubmissions(manual: Source | undefined, categories: Category[], slugToId: Map<string, number>) {
+  const { data: pending, error } = await db
+    .from("submissions")
+    .select("id, url, note")
+    .eq("status", "pending")
+    .order("created_at")
+    .limit(SUBMISSIONS_PER_RUN);
+  if (error) return console.error(`  ✗ zgłoszenia: ${error.message}`);
+  if (!pending.length) return;
+  console.log(`Zgłoszone linki: ${pending.length}`);
+
+  const finish = (id: number, status: string, message: string, article_id: number | null = null) =>
+    db.from("submissions").update({ status, message, article_id, processed_at: new Date().toISOString() }).eq("id", id);
+
+  for (const sub of pending) {
+    try {
+      const { data: existing } = await db.from("articles").select("id, status").eq("url", sub.url).maybeSingle();
+      if (existing) {
+        await (existing.status === "done"
+          ? finish(sub.id, "done", "Ten materiał był już w PrzepisFK.", existing.id)
+          : finish(sub.id, "rejected", "Ten materiał był już oceniony jako poza zakresem JST."));
+        continue;
+      }
+
+      const page = await readUrl(sub.url);
+      if (page.text.trim().length < 50) {
+        await finish(sub.id, "error", "Nie udało się odczytać treści (strona może wymagać logowania lub być obrazem).");
+        continue;
+      }
+      const c: Candidate = {
+        source: manual ?? { id: 0, name: "Zgłoszony link", url: "", kind: "manual" },
+        url: sub.url,
+        title: page.title,
+        publishedAt: new Date(),
+        text: `${sub.note ? `Uwaga zgłaszającego: ${sub.note}\n` : ""}${page.text}`,
+        stage: stageFor(sub.url),
+      };
+      const ai = askClaude(buildPrompt(c, categories));
+      if (!c.title || c.title.length < 10) c.title = ai.title?.trim() || sub.url;
+      if (manual) c.source = manual;
+      const id = await saveResult(c, ai, slugToId);
+      await (id
+        ? finish(sub.id, "done", "Streszczenie opublikowane.", id)
+        : finish(sub.id, "rejected", "AI oceniło, że materiał nie dotyczy JST ani jednostek budżetowych."));
+      console.log(`  ${id ? "✓" : "–"} zgłoszenie: ${c.title}`);
+    } catch (err) {
+      await finish(sub.id, "error", `Nie udało się przetworzyć: ${(err as Error).message.split("\n")[0]}`);
+      console.error(`  ✗ zgłoszenie ${sub.url}: ${(err as Error).message.split("\n")[0]}`);
+    }
+  }
 }
 
 // Ponowna ocena opublikowanych wpisów nowymi zasadami (np. po zmianie profilu na JST)
@@ -293,7 +375,7 @@ async function reassess(sources: Source[], categories: Category[], slugToId: Map
     };
     try {
       await enrichText(c);
-      const ok = await saveResult(c, askClaude(buildPrompt(c, categories)), slugToId, a.id);
+      const ok = !!(await saveResult(c, askClaude(buildPrompt(c, categories)), slugToId, a.id));
       if (ok) kept++; else hidden++;
       console.log(`  ${ok ? "✓ zostaje" : "– ukryty"}: ${a.title}`);
     } catch (err) {
@@ -310,7 +392,7 @@ async function main() {
   console.log(`PrzepisFK: limit ${LIMIT}, ostatnie ${DAYS} dni, model ${CLAUDE_MODEL}`);
 
   const [{ data: sources, error: e1 }, { data: categories, error: e2 }] = await Promise.all([
-    db.from("sources").select("id, name, url, kind").eq("active", true),
+    db.from("sources").select("id, name, url, kind, active"),
     db.from("categories").select("id, slug, name").order("sort"),
   ]);
   if (e1 || e2) throw e1 ?? e2;
@@ -318,9 +400,12 @@ async function main() {
 
   if (REASSESS) return reassess(sources as Source[], categories!, slugToId);
 
+  // 0. Najpierw linki zgłoszone przez użytkowników na stronie
+  await processSubmissions((sources as Source[]).find((s) => s.kind === "manual"), categories!, slugToId);
+
   // 1. Pobierz wpisy ze wszystkich źródeł
   let candidates: Candidate[] = [];
-  for (const s of sources as Source[]) {
+  for (const s of (sources as (Source & { active: boolean })[]).filter((x) => x.active)) {
     try {
       const items = s.kind === "eli" ? await fromEli(s) : s.kind === "sejm" ? await fromSejm(s) : await fromRss(s);
       const from = since(s.kind);
@@ -352,7 +437,7 @@ async function main() {
   for (const c of queue.slice(0, LIMIT)) {
     try {
       await enrichText(c);
-      const saved = await saveResult(c, askClaude(buildPrompt(c, categories!)), slugToId);
+      const saved = !!(await saveResult(c, askClaude(buildPrompt(c, categories!)), slugToId));
       if (saved) done++;
       else skipped++;
       console.log(`  ${saved ? "✓" : "– pominięty przez AI:"} ${c.title}`);

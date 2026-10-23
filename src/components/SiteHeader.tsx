@@ -16,6 +16,7 @@ export async function SiteHeader({ subtitle = true }: { subtitle?: boolean }) {
             {user ? (
               <>
                 <Link href="/moj-feed" className="font-semibold hover:underline">Mój PrzepisFK</Link>
+                <Link href="/zglos" className="hover:underline">Zgłoś link</Link>
                 <Link href="/ustawienia" className="hover:underline">Ustawienia</Link>
                 <span className="hidden opacity-70 sm:inline">{user.email}</span>
                 <form action={signOut}>

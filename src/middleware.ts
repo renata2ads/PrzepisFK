@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PROTECTED = ["/moj-feed", "/ustawienia", "/nowe-haslo"];
+const PROTECTED = ["/moj-feed", "/ustawienia", "/nowe-haslo", "/zglos"];
 
 // Odświeża sesję przy każdym żądaniu i chroni strony tylko dla zalogowanych
 export async function middleware(request: NextRequest) {
