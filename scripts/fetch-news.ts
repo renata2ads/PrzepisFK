@@ -63,7 +63,7 @@ const db = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false
 
 // ---------- typy ----------
 
-type Source = { id: number; name: string; url: string; kind: "rss" | "eli" | "sejm" | "manual" };
+type Source = { id: number; name: string; url: string; kind: "rss" | "eli" | "sejm" | "manual" | "page" };
 type Stage = "news" | "act" | "draft";
 type Category = { id: number; slug: string; name: string };
 type Candidate = {
@@ -88,7 +88,8 @@ type AiResult = {
 // ---------- pobieranie ----------
 
 const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
-const since = (kind: Source["kind"]) => (kind === "rss" ? daysAgo(DAYS) : (FROM ?? daysAgo(LAW_DAYS)));
+const since = (kind: Source["kind"]) =>
+  kind === "rss" ? daysAgo(DAYS) : kind === "page" ? new Date(0) : (FROM ?? daysAgo(LAW_DAYS));
 const rss = new Parser({ timeout: 20000, headers: { "User-Agent": "PrzepisFK/1.0" } });
 
 async function fromRss(source: Source): Promise<Candidate[]> {
@@ -143,12 +144,49 @@ async function fromSejm(source: Source): Promise<Candidate[]> {
     }));
 }
 
+// Obserwowana strona bez RSS: każdy plik PDF na stronie to osobny wpis (schematy XSD pomijamy)
+async function fromPage(source: Source): Promise<Candidate[]> {
+  const res = await fetch(source.url, { headers: { "User-Agent": "PrzepisFK/1.0" }, signal: AbortSignal.timeout(30000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const html = await res.text();
+  const base = new URL(source.url);
+  const found = new Map<string, Candidate>();
+
+  for (const [, href, inner] of html.matchAll(/<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)) {
+    const text = stripHtml(inner).replace(/&quot;/g, '"').replace(/&amp;/g, "&");
+    const isPdf = /\.pdf\b/i.test(text) || /\.pdf$/i.test(href);
+    if (!isPdf || !(href.includes("/attachment/") || /\.pdf$/i.test(href))) continue;
+    // tekst linku na gov.pl: „Opis Nazwa_pliku.pdf 0.11MB” → zostaje sam opis
+    const title = text.split(/\s\S+\.pdf\b/i)[0].trim();
+    const url = new URL(href, base).toString();
+    if (title.length >= 8 && !found.has(url)) {
+      found.set(url, { source, url, title, publishedAt: new Date(), text: "", stage: "news" });
+    }
+  }
+  return [...found.values()];
+}
+
+// Pierwsze odczytanie strony: historię oznaczamy jako znaną, zostawiamy tylko bieżące lata i tematy śledzone
+async function baselinePage(source: Source, items: Candidate[]) {
+  const { count } = await db.from("articles").select("id", { count: "exact", head: true }).eq("source_id", source.id);
+  if (count) return items;
+  const current = (c: Candidate) => /\b202[6-9]\b/.test(c.title) || trackedTopicsIn(c.title).length > 0;
+  const old = items.filter((c) => !current(c));
+  for (const c of old) await insertArticle(c, { status: "skipped" });
+  console.log(`  ${source.name}: pierwsze odczytanie — ${old.length} starszych plików oznaczonych jako znane`);
+  return items.filter(current);
+}
+
 function stripHtml(html: string) {
   return html.replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
 }
 
 // Gdy kanał nie podaje treści (np. Infor), bierzemy z artykułu tylko jego opis (meta description)
 async function enrichText(c: Candidate) {
+  if (c.source.kind === "page") {
+    c.text = (await readUrl(c.url)).text;
+    return;
+  }
   if (c.text.length >= 200 || c.source.kind !== "rss") return;
   try {
     const res = await fetch(c.url, { headers: { "User-Agent": "PrzepisFK/1.0" }, signal: AbortSignal.timeout(15000) });
@@ -164,7 +202,7 @@ async function enrichText(c: Candidate) {
 
 const matchesKeywords = (c: Candidate) => {
   const t = `${c.title} ${c.text}`.toLowerCase();
-  return c.stage !== "news" || KEYWORDS.some((k) => t.includes(k)) || trackedTopicsIn(t).length > 0;
+  return c.stage !== "news" || c.source.kind === "page" || KEYWORDS.some((k) => t.includes(k)) || trackedTopicsIn(t).length > 0;
 };
 
 // ---------- Claude ----------
@@ -408,7 +446,11 @@ async function main() {
   let candidates: Candidate[] = [];
   for (const s of (sources as (Source & { active: boolean })[]).filter((x) => x.active)) {
     try {
-      const items = s.kind === "eli" ? await fromEli(s) : s.kind === "sejm" ? await fromSejm(s) : await fromRss(s);
+      const items =
+        s.kind === "eli" ? await fromEli(s)
+        : s.kind === "sejm" ? await fromSejm(s)
+        : s.kind === "page" ? await baselinePage(s, await fromPage(s))
+        : await fromRss(s);
       const from = since(s.kind);
       const fresh = items.filter((c) => !c.publishedAt || c.publishedAt >= from);
       console.log(`  ${s.name}: ${items.length} pasujących, ${fresh.length} od ${from.toISOString().slice(0, 10)}`);
