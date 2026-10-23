@@ -6,6 +6,17 @@ const PROTECTED = ["/moj-feed", "/ustawienia", "/nowe-haslo", "/zglos"];
 // Odświeża sesję przy każdym żądaniu i chroni strony tylko dla zalogowanych
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
+  const path = request.nextUrl.pathname;
+  const hasSession = request.cookies.getAll().some((c) => c.name.startsWith("sb-"));
+
+  // bez ciasteczka sesji nie ma czego odświeżać — oszczędzamy zapytanie do Supabase
+  if (!hasSession) {
+    if (!PROTECTED.some((p) => path.startsWith(p))) return response;
+    const url = request.nextUrl.clone();
+    url.pathname = "/logowanie";
+    url.search = `?dalej=${encodeURIComponent(path)}`;
+    return NextResponse.redirect(url);
+  }
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -23,7 +34,6 @@ export async function proxy(request: NextRequest) {
   );
 
   const { data } = await supabase.auth.getUser();
-  const path = request.nextUrl.pathname;
 
   if (!data.user && PROTECTED.some((p) => path.startsWith(p))) {
     const url = request.nextUrl.clone();

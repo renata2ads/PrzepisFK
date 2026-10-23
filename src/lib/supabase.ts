@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { unstable_cache } from "next/cache";
 import { FORMS_PREFIX } from "./forms";
 
 // Klient publiczny (klucz anon) — odczyt chroniony przez RLS
@@ -44,11 +45,16 @@ export type Review = {
 const ARTICLE_FIELDS =
   "id, url, title, published_at, summary, impact, effective_date, form_link, stage, system_impact, impact_types, priority, sources(name), categories!article_categories(id, slug, name), article_qa(question, answer, sort)";
 
-export async function getCategories() {
-  const { data, error } = await supabase.from("categories").select("id, slug, name").order("sort");
-  if (error) throw error;
-  return data as Category[];
-}
+// Obszary i źródła druków zmieniają się rzadko — pamięć podręczna na 5 minut
+export const getCategories = unstable_cache(
+  async () => {
+    const { data, error } = await supabase.from("categories").select("id, slug, name").order("sort");
+    if (error) throw error;
+    return data as Category[];
+  },
+  ["categories"],
+  { revalidate: 300 },
+);
 
 // Terminarz: wpisy z datą wejścia w życie w podanym przedziale (rosnąco)
 export async function getUpcoming({ from, to, categoryId }: { from: string; to: string; categoryId?: number }) {
@@ -73,11 +79,15 @@ export async function getUpcoming({ from, to, categoryId }: { from: string; to: 
 
 // Druki: nowe wersje druków ze źródeł „Druki · <grupa>” (grupa = nazwa źródła bez przedrostka)
 export { FORMS_PREFIX };
-const getFormSources = async () => {
-  const { data, error } = await supabase.from("sources").select("id, name").like("name", `${FORMS_PREFIX}%`);
-  if (error) throw error;
-  return data;
-};
+const getFormSources = unstable_cache(
+  async () => {
+    const { data, error } = await supabase.from("sources").select("id, name").like("name", `${FORMS_PREFIX}%`);
+    if (error) throw error;
+    return data;
+  },
+  ["form-sources"],
+  { revalidate: 300 },
+);
 
 // Grupy druków (do wyboru w Ustawieniach) i id ich źródeł
 export async function getFormGroups() {
@@ -125,18 +135,15 @@ export async function getArticles({ categoryIds, articleIds, query, stages, page
     .range(from, from + PAGE_SIZE);
 
   if (stages) req = req.in("stage", stages);
-  if (withoutForms) {
-    const forms = await getFormSources();
-    if (forms.length) req = req.not("source_id", "in", `(${forms.map((f) => f.id).join(",")})`);
-  }
-
-  if (categoryIds) {
-    const { data: links, error } = await supabase
-      .from("article_categories")
-      .select("article_id")
-      .in("category_id", categoryIds);
-    if (error) throw error;
-    req = req.in("id", [...new Set(links.map((l) => l.article_id))]);
+  // zapytania pomocnicze równolegle
+  const [forms, links] = await Promise.all([
+    withoutForms ? getFormSources() : null,
+    categoryIds ? supabase.from("article_categories").select("article_id").in("category_id", categoryIds) : null,
+  ]);
+  if (forms?.length) req = req.not("source_id", "in", `(${forms.map((f) => f.id).join(",")})`);
+  if (links) {
+    if (links.error) throw links.error;
+    req = req.in("id", [...new Set(links.data.map((l) => l.article_id))]);
   }
   if (articleIds) req = req.in("id", articleIds);
 

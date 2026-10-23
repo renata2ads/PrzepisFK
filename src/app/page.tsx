@@ -3,7 +3,7 @@ import { ArticleCard } from "@/components/ArticleCard";
 import { EntryTabs } from "@/components/EntryTabs";
 import { SiteHeader } from "@/components/SiteHeader";
 import { getArticles, getCategories, PAGE_SIZE } from "@/lib/supabase";
-import { createSessionClient } from "@/lib/supabase-server";
+import { createSessionClient, getUser } from "@/lib/supabase-server";
 
 export const revalidate = 300; // odśwież listę co 5 minut
 
@@ -13,24 +13,23 @@ export default async function Home({ searchParams }: Props) {
   const { k, q, widok, strona } = await searchParams;
   const drafts = widok === "projekty";
   const page = Math.max(1, Number(strona) || 1);
-  const categories = await getCategories();
+  const [categories, user, supabase] = await Promise.all([getCategories(), getUser(), createSessionClient()]);
   const active = categories.find((c) => c.slug === k);
-  const found = await getArticles({
-    categoryIds: active ? [active.id] : undefined,
-    query: q,
-    stages: drafts ? ["draft"] : ["news", "act"],
-    page,
-    withoutForms: true,
-  });
+
+  // wpisy i zakładki zalogowanego (przyciski „Zapisz”) równolegle
+  const [found, marks] = await Promise.all([
+    getArticles({
+      categoryIds: active ? [active.id] : undefined,
+      query: q,
+      stages: drafts ? ["draft"] : ["news", "act"],
+      page,
+      withoutForms: true,
+    }),
+    user ? supabase.from("bookmarks").select("article_id") : null,
+  ]);
   const hasMore = found.length > PAGE_SIZE;
   const articles = found.slice(0, PAGE_SIZE);
-
-  // zalogowany widzi przyciski zakładek
-  const supabase = await createSessionClient();
-  const { data } = await supabase.auth.getUser();
-  const bookmarkIds = data.user
-    ? new Set((await supabase.from("bookmarks").select("article_id")).data?.map((b) => b.article_id))
-    : null;
+  const bookmarkIds = marks ? new Set(marks.data?.map((b) => b.article_id)) : null;
 
   const href = ({ slug = active?.slug, view = widok, toPage }: { slug?: string; view?: string; toPage?: number }) => {
     const p = new URLSearchParams();

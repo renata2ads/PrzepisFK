@@ -1,8 +1,9 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { cache } from "react";
 
 // Klient z sesją zalogowanego użytkownika (ciasteczka) — dla stron i akcji serwerowych
-export async function createSessionClient() {
+export const createSessionClient = cache(async () => {
   const cookieStore = await cookies();
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -20,10 +21,11 @@ export async function createSessionClient() {
       },
     },
   );
-}
+});
 
-export async function getUser() {
+// Jedno sprawdzenie użytkownika na żądanie (strona i nagłówek korzystają z tego samego wyniku)
+export const getUser = cache(async () => {
   const supabase = await createSessionClient();
   const { data } = await supabase.auth.getUser();
   return data.user;
-}
+});

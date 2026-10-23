@@ -4,7 +4,7 @@ import { SiteHeader } from "@/components/SiteHeader";
 import { formArticleIds } from "@/lib/forms";
 import { keywordArticleIds, keywordsIn } from "@/lib/keywords";
 import { getArticles, getCategories, type Review } from "@/lib/supabase";
-import { createSessionClient } from "@/lib/supabase-server";
+import { createSessionClient, getUser } from "@/lib/supabase-server";
 
 export const metadata = { title: "Mój PrzepisFK" };
 
@@ -15,9 +15,8 @@ export default async function MyFeedPage({ searchParams }: Props) {
   const { widok } = await searchParams;
   const view = ["do-weryfikacji", "wplywa", "zapisane"].includes(widok ?? "") ? widok! : "feed";
 
-  const supabase = await createSessionClient();
-  const { data } = await supabase.auth.getUser();
-  const user = data.user!; // proxy (src/proxy.ts) wpuszcza tu tylko zalogowanych
+  const [supabase, sessionUser] = await Promise.all([createSessionClient(), getUser()]);
+  const user = sessionUser!; // proxy (src/proxy.ts) wpuszcza tu tylko zalogowanych
 
   const [categories, { data: chosen }, { data: marks }, { data: profile }] = await Promise.all([
     getCategories(),
