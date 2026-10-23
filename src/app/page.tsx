@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArticleCard } from "@/components/ArticleCard";
+import { EntryTabs } from "@/components/EntryTabs";
 import { SiteHeader } from "@/components/SiteHeader";
 import { getArticles, getCategories, PAGE_SIZE } from "@/lib/supabase";
 import { createSessionClient } from "@/lib/supabase-server";
@@ -40,22 +41,12 @@ export default async function Home({ searchParams }: Props) {
     return s ? `/?${s}` : "/";
   };
 
-  const tab = (isActive: boolean) =>
-    `border-b-2 px-1 pb-2 font-semibold ${isActive ? "border-[#c2410c] text-[#14213d]" : "border-transparent text-[#5b6478] hover:text-[#14213d]"}`;
-
   return (
     <div className="min-h-screen bg-[#e9ecf2] text-[#14213d]">
       <SiteHeader />
 
       <main className="mx-auto max-w-3xl px-4 py-6 sm:px-10">
-        <nav aria-label="Rodzaj wpisów" className="mb-5 flex gap-6 border-b border-[#dde1ea]">
-          <Link href={href({ view: "" })} aria-current={!drafts ? "page" : undefined} className={tab(!drafts)}>
-            Zmiany w przepisach
-          </Link>
-          <Link href={href({ view: "projekty" })} aria-current={drafts ? "page" : undefined} className={tab(drafts)}>
-            Projekty przepisów
-          </Link>
-        </nav>
+        <EntryTabs active={drafts ? "projekty" : "zmiany"} hrefs={{ zmiany: href({ view: "" }), projekty: href({ view: "projekty" }) }} />
 
         {drafts && (
           <p className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-900 ring-1 ring-amber-200">

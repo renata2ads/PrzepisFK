@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { EntryTabs } from "@/components/EntryTabs";
 import { SiteHeader } from "@/components/SiteHeader";
 import { IMPACT_TYPES, isImpactType, PRIORITY } from "@/lib/impact";
 import { FORMS_PREFIX, getFormVersions, type Article } from "@/lib/supabase";
@@ -27,8 +28,9 @@ export default async function FormsPage({ searchParams }: Props) {
 
   return (
     <div className="min-h-screen bg-[#e9ecf2] text-[#14213d]">
-      <SiteHeader subtitle={false} />
-      <main className="mx-auto max-w-3xl px-4 py-8 sm:px-10">
+      <SiteHeader />
+      <main className="mx-auto max-w-3xl px-4 py-6 sm:px-10">
+        <EntryTabs active="druki" />
         <h1 className="text-2xl font-bold">Nowe wersje druków</h1>
         <p className="mt-1 text-[#5b6478]">
           Druki Gofin sprawdzane codziennie — nowa wersja druku (data „obowiązuje od”) pojawia się tu z oceną wpływu na system.
