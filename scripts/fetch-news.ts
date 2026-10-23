@@ -214,22 +214,27 @@ async function fromForms(source: Source): Promise<Candidate[]> {
   const sectionRe = /href="(\/dzial\/\d+\/[a-z0-9-]+)"/g;
   const formRe = /href="(\/dzial\/\d+\/druk\/\d+\/[^"#?]+)"/g;
 
-  // Dział dzieli się na poddziały; menu (działy ze strony głównej) pomijamy, poddziały odwiedzamy do 2 poziomów w głąb
+  // Dział główny (z menu) przeszukujemy w głąb: strona poddziału pokazuje drzewo jego działu głównego.
+  // Poddział bierzemy bez schodzenia niżej — jego strona pokazuje też działy „rodzeństwa”.
   const menu = new Set(links(await get(base.origin), sectionRe));
-  const forms = new Set<string>();
+  const sectionId = (url: string) => url.match(/\/dzial\/(\d+)\//)?.[1];
+  const found = new Set<string>();
   const visited = new Set<string>();
   let level = [source.url];
-  for (let depth = 0; depth < 3 && level.length; depth++) {
+  for (let depth = 0; depth < (menu.has(source.url) ? 3 : 1) && level.length; depth++) {
     const next: string[] = [];
     for (const section of level) {
       if (visited.has(section)) continue;
       visited.add(section);
       const html = await get(section);
-      links(html, formRe).forEach((f) => forms.add(f));
+      links(html, formRe).forEach((f) => found.add(f));
       next.push(...links(html, sectionRe).filter((s) => !menu.has(s) && !visited.has(s)));
     }
     level = [...new Set(next)];
   }
+  // tylko druki z odwiedzonych działów (bez „popularnych druków” z innych części serwisu)
+  const ids = new Set([...visited].map(sectionId));
+  const forms = new Set([...found].filter((f) => ids.has(sectionId(f))));
   for (const f of checkedForms) forms.delete(f); // ten sam druk bywa w kilku działach — sprawdza go pierwsza grupa
   forms.forEach((f) => checkedForms.add(f));
   console.log(`  ${source.name}: ${visited.size} działów, ${forms.size} druków`);

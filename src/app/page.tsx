@@ -20,6 +20,7 @@ export default async function Home({ searchParams }: Props) {
     query: q,
     stages: drafts ? ["draft"] : ["news", "act"],
     page,
+    withoutForms: true,
   });
   const hasMore = found.length > PAGE_SIZE;
   const articles = found.slice(0, PAGE_SIZE);

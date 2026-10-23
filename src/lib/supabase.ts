@@ -72,9 +72,14 @@ export async function getUpcoming({ from, to, categoryId }: { from: string; to: 
 
 // Druki: nowe wersje druków ze źródeł „Druki · <grupa>” (grupa = nazwa źródła bez przedrostka)
 export const FORMS_PREFIX = "Druki · ";
+const getFormSources = async () => {
+  const { data, error } = await supabase.from("sources").select("id, name").like("name", `${FORMS_PREFIX}%`);
+  if (error) throw error;
+  return data;
+};
+
 export async function getFormVersions() {
-  const { data: sources, error: e1 } = await supabase.from("sources").select("id, name").like("name", `${FORMS_PREFIX}%`);
-  if (e1) throw e1;
+  const sources = await getFormSources();
   const groups = [...new Set(sources.map((s) => s.name.replace(FORMS_PREFIX, "")))].sort((a, b) => a.localeCompare(b, "pl"));
   if (!sources.length) return { groups, articles: [] as Article[] };
   const { data, error } = await supabase
@@ -89,10 +94,17 @@ export async function getFormVersions() {
 
 export const PAGE_SIZE = 30;
 
-type ArticleFilter = { categoryIds?: number[]; articleIds?: number[]; query?: string; stages?: Stage[]; page?: number };
+type ArticleFilter = {
+  categoryIds?: number[];
+  articleIds?: number[];
+  query?: string;
+  stages?: Stage[];
+  page?: number;
+  withoutForms?: boolean; // bez nowych wersji druków (mają własną zakładkę „Druki”)
+};
 
 // Zwraca o jeden wpis więcej niż PAGE_SIZE — po nim poznajemy, że jest następna strona
-export async function getArticles({ categoryIds, articleIds, query, stages, page = 1 }: ArticleFilter) {
+export async function getArticles({ categoryIds, articleIds, query, stages, page = 1, withoutForms }: ArticleFilter) {
   const from = (page - 1) * PAGE_SIZE;
   let req = supabase
     .from("articles")
@@ -101,6 +113,10 @@ export async function getArticles({ categoryIds, articleIds, query, stages, page
     .range(from, from + PAGE_SIZE);
 
   if (stages) req = req.in("stage", stages);
+  if (withoutForms) {
+    const forms = await getFormSources();
+    if (forms.length) req = req.not("source_id", "in", `(${forms.map((f) => f.id).join(",")})`);
+  }
 
   if (categoryIds) {
     const { data: links, error } = await supabase
