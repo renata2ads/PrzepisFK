@@ -269,7 +269,7 @@ Zwróć JSON:
   "impact": "1–2 zdania: co to zmienia w praktyce dla księgowości / kadr JST lub jednostki budżetowej",
   "system_impact": "1–2 zdania z perspektywy kierownika produktu systemu dziedzinowego dla JST: co konkretnie sprawdzić lub zmienić w oprogramowaniu (np. nowa wersja struktury XML, nowe pozycje w słowniku klasyfikacji, zmiana algorytmu naliczania, nowy wzór sprawozdania); jeśli zmiana nie wymaga zmian w systemie — napisz to",
   "impact_types": ["slug", ...] — 0–3 rodzaje wpływu z listy wyżej (pusta lista, gdy brak wpływu na system),
-  "priority": "high" | "medium" | "info" — high: zmiana obowiązkowa wymagająca dostosowania systemu z konkretnym terminem; medium: prawdopodobny wpływ, wymaga weryfikacji; info: brak wpływu na system lub tylko informacja,
+  "priority": "high" | "medium" | "info" — high: zmiana obowiązkowa wymagająca dostosowania systemu, która wchodzi w życie w ciągu najbliższych 3 miesięcy; medium: prawdopodobny wpływ, wymaga weryfikacji; info: brak wpływu na system lub tylko informacja,
   "effective_date": "RRRR-MM-DD" albo null — data wejścia w życie, tylko jeśli wynika z treści (dla projektu ustawy: planowana data, jeśli podana),
   "form": "symbol druku" albo null — tylko gdy wpis dotyczy konkretnego formularza / deklaracji / sprawozdania (np. "VAT-R", "PIT-11", "PIT-4R", "PIT-8AR", "Rb-27S", "JPK_V7M", "ZUS DRA"),
   "qa": [{"question": "Kogo dotyczy?", "answer": "..."}, {"question": "Od kiedy?", "answer": "..."}, {"question": "Co muszę zrobić?", "answer": "..."}]
@@ -318,6 +318,17 @@ async function insertArticle(c: Candidate, fields: Record<string, unknown>) {
   return data.id as number;
 }
 
+// Pilne = wpływ na system i najwyżej 3 miesiące do wejścia w życie (tyle co najmniej trwa dostosowanie systemu)
+const URGENT_MONTHS = 3;
+function urgency(priority: string, effectiveDate: string | null) {
+  if (priority === "info" || !effectiveDate) return priority;
+  const limit = new Date();
+  limit.setMonth(limit.getMonth() + URGENT_MONTHS);
+  const today = new Date().toISOString().slice(0, 10);
+  if (effectiveDate >= today && effectiveDate <= limit.toISOString().slice(0, 10)) return "high";
+  return priority === "high" ? "medium" : priority;
+}
+
 // Zapisuje wynik AI: nowy wpis (insert) albo ponownie oceniony (update + nowe kategorie i Q&A)
 async function saveResult(c: Candidate, ai: AiResult, slugToId: Map<string, number>, existingId?: number) {
   if (!ai.relevant) {
@@ -326,15 +337,16 @@ async function saveResult(c: Candidate, ai: AiResult, slugToId: Map<string, numb
     return null;
   }
 
+  const effective_date = c.effectiveDate ?? (/^\d{4}-\d{2}-\d{2}$/.test(ai.effective_date ?? "") ? ai.effective_date : null);
   const fields = {
     status: "done",
     summary: ai.summary,
     impact: ai.impact,
     system_impact: ai.system_impact ?? null,
     impact_types: (ai.impact_types ?? []).filter(isImpactType).slice(0, 3),
-    priority: isPriority(ai.priority ?? "") ? ai.priority : "medium",
+    priority: urgency(isPriority(ai.priority ?? "") ? ai.priority! : "medium", effective_date),
     form_link: ai.form ? `https://druki.gofin.pl/search/?search_form[phrase]=${encodeURIComponent(ai.form)}` : null,
-    effective_date: c.effectiveDate ?? (/^\d{4}-\d{2}-\d{2}$/.test(ai.effective_date ?? "") ? ai.effective_date : null),
+    effective_date,
   };
   let id = existingId;
   if (id) {
@@ -497,9 +509,29 @@ function acquireLock() {
   process.on("exit", () => rmSync(LOCK, { force: true }));
 }
 
+// Pilność zależy od daty: przeliczamy ją przy każdym przebiegu (bez AI)
+async function refreshUrgency() {
+  const { data, error } = await db
+    .from("articles")
+    .select("id, priority, effective_date")
+    .eq("status", "done")
+    .not("effective_date", "is", null)
+    .neq("priority", "info");
+  if (error) return console.error(`  ✗ pilność: ${error.message}`);
+  let changed = 0;
+  for (const a of data) {
+    const priority = urgency(a.priority ?? "medium", a.effective_date);
+    if (priority === a.priority) continue;
+    await db.from("articles").update({ priority }).eq("id", a.id);
+    changed++;
+  }
+  console.log(`Pilność: zmieniono ${changed}`);
+}
+
 async function main() {
   acquireLock();
   if (NOTIFY_ONLY) return notify(db);
+  if (args.includes("--pilnosc")) return refreshUrgency();
   console.log(`PrzepisFK: limit ${LIMIT}, ostatnie ${DAYS} dni, model ${CLAUDE_MODEL}`);
 
   const [{ data: sources, error: e1 }, { data: categories, error: e2 }] = await Promise.all([
@@ -565,6 +597,7 @@ async function main() {
   console.log(`Gotowe: zapisane ${done}, pominięte przez AI ${skipped}, błędy ${failed}, czeka ${Math.max(queue.length - LIMIT, 0)}.`);
 
   // 5. Powiadomienia o nowych wpisach
+  await refreshUrgency();
   await notify(db);
 }
 
