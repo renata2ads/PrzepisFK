@@ -5,6 +5,7 @@
 //               npm run fetch -- --od 2026-01-01   (uzupełnienie Dziennika Ustaw i projektów ustaw od tej daty)
 
 import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createClient } from "@supabase/supabase-js";
 import Parser from "rss-parser";
@@ -178,7 +179,13 @@ async function baselinePage(source: Source, items: Candidate[]) {
 }
 
 function stripHtml(html: string) {
-  return html.replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+  return html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/[​­﻿]/g, "") // niewidoczne znaki (gov.pl: „JPK&#8203;_MAG”)
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 // Gdy kanał nie podaje treści (np. Infor), bierzemy z artykułu tylko jego opis (meta description)
@@ -427,7 +434,27 @@ async function reassess(sources: Source[], categories: Category[], slugToId: Map
 
 // ---------- przebieg ----------
 
+// Blokada: dwa przebiegi naraz zapisywałyby te same wpisy (np. ręczny + Harmonogram zadań)
+const LOCK = "logs/fetch.lock";
+
+function acquireLock() {
+  if (existsSync(LOCK)) {
+    const pid = Number(readFileSync(LOCK, "utf8"));
+    try {
+      process.kill(pid, 0); // proces nadal działa?
+      console.error(`Skrypt już działa (PID ${pid}) — kończę. Jeśli to pomyłka, usuń plik ${LOCK}.`);
+      process.exit(0);
+    } catch {
+      // stara blokada po przerwanym przebiegu
+    }
+  }
+  mkdirSync("logs", { recursive: true });
+  writeFileSync(LOCK, String(process.pid));
+  process.on("exit", () => rmSync(LOCK, { force: true }));
+}
+
 async function main() {
+  acquireLock();
   console.log(`PrzepisFK: limit ${LIMIT}, ostatnie ${DAYS} dni, model ${CLAUDE_MODEL}`);
 
   const [{ data: sources, error: e1 }, { data: categories, error: e2 }] = await Promise.all([
