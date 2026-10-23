@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArticleCard } from "@/components/ArticleCard";
+import { SiteHeader } from "@/components/SiteHeader";
 import { getArticles, getCategories } from "@/lib/supabase";
 
 export const revalidate = 300; // odśwież listę co 5 minut
@@ -22,16 +23,7 @@ export default async function Home({ searchParams }: Props) {
 
   return (
     <div className="min-h-screen bg-[#e9ecf2] text-[#14213d]">
-      <header className="bg-[#14213d] px-4 py-8 text-white sm:px-10">
-        <div className="mx-auto max-w-3xl">
-          <h1 className="text-4xl font-extrabold tracking-tight sm:text-5xl">
-            <Link href="/">PrzepisFK</Link>
-          </h1>
-          <p className="mt-2 max-w-xl opacity-90">
-            Zmiany w przepisach finansowo-księgowych, streszczone przez AI i dopasowane do Twoich obszarów.
-          </p>
-        </div>
-      </header>
+      <SiteHeader />
 
       <main className="mx-auto max-w-3xl px-4 py-6 sm:px-10">
         <form action="/" className="flex gap-2">
