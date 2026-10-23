@@ -31,7 +31,7 @@ export async function SiteHeader({ subtitle = true }: { subtitle?: boolean }) {
         </div>
         {subtitle && (
           <p className="mt-2 max-w-xl opacity-90">
-            Zmiany w przepisach finansowo-księgowych, streszczone przez AI i dopasowane do Twoich obszarów.
+            Zmiany w przepisach dla JST i jednostek budżetowych, streszczone przez AI i dopasowane do Twoich obszarów.
           </p>
         )}
       </div>

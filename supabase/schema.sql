@@ -149,13 +149,16 @@ create policy "Własne zakładki" on public.bookmarks
 -- ============================================================
 
 insert into public.categories (slug, name, sort) values
-  ('rachunkowosc',      'Rachunkowość',            1),
-  ('finanse-publiczne', 'Finanse publiczne / Rb',  2),
-  ('vat-ksef',          'VAT i KSeF',              3),
-  ('jpk',               'JPK',                     4),
-  ('podatki-lokalne',   'Podatki lokalne',         5),
-  ('place-zus',         'Płace i ZUS',             6),
-  ('inne',              'Inne',                    7);
+  ('rachunkowosc-budzetowa', 'Rachunkowość budżetowa',          1),
+  ('sprawozdawczosc',        'Sprawozdawczość (Rb, bilans)',    2),
+  ('budzet-wpf',             'Budżet, WPF i klasyfikacja',      3),
+  ('vat-ksef',               'VAT i KSeF w JST',                4),
+  ('podatki-lokalne',        'Podatki i opłaty lokalne',        5),
+  ('place-zus',              'Płace i ZUS w sferze budżetowej', 6),
+  ('oswiata',                'Oświata',                         7),
+  ('zamowienia-publiczne',   'Zamówienia publiczne',            8),
+  ('dotacje-ue',             'Dotacje i środki UE',             9),
+  ('inne',                   'Inne',                            10);
 
 insert into public.sources (name, url, kind) values
   ('Dziennik Ustaw (API Sejmu)',    'https://api.sejm.gov.pl/eli/acts/DU', 'eli'),

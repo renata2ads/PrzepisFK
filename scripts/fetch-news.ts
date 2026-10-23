@@ -1,6 +1,7 @@
 // PrzepisFK — pobieranie wpisów: RSS / Dziennik Ustaw → claude -p → Supabase
 // Uruchomienie: npm run fetch            (domyślnie maks. 20 wpisów)
 //               npm run fetch -- --limit 5 --days 14
+//               npm run fetch -- --przeocen   (ponowna ocena opublikowanych wpisów, np. po zmianie promptu)
 
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -18,14 +19,18 @@ const argValue = (name: string, fallback: number) => {
 const LIMIT = argValue("limit", 20); // ile wpisów streszcza Claude w jednym przebiegu
 const DAYS = argValue("days", 14); // jak stare wpisy w ogóle rozważamy
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL ?? "haiku"; // haiku oszczędza limit Pro
+const REASSESS = args.includes("--przeocen");
 
-// Wstępny filtr (bez AI): wpis musi zawierać choć jedno z tych słów
+// Wstępny filtr (bez AI): wpis musi zawierać choć jedno z tych słów.
+// Profil: JST i jednostki budżetowe (urzędy, szkoły, przedszkola, zarządy dróg, MOPS…)
 const KEYWORDS = [
   "rachunkow", "księg", "ksieg", "bilans", "sprawozda", "budżet", "budzet",
-  "finans", "vat", "ksef", "faktur", "jpk", "podat", "cit", "pit", "akcyz",
-  "ordynac", "opłat", "oplat", "samorząd", "samorzad", "jst", "gmin", "powiat",
-  "zus", "składk", "skladk", "wynagrodz", "płac", "plac", "środk", "srodk",
-  "amortyz", "dotac", "wydatk", "dochod", "klasyfikac", "rio", "skarbni",
+  "finans", "vat", "ksef", "faktur", "jpk", "podat", "pit", "ordynac",
+  "opłat", "oplat", "samorząd", "samorzad", "jst", "gmin", "powiat", "województw", "wojewodztw",
+  "urzęd", "urzed", "jednost", "sektor", "zus", "składk", "skladk", "wynagrodz", "płac", "plac",
+  "środk", "srodk", "amortyz", "dotac", "subwencj", "wydatk", "dochod", "klasyfikac", "wpf",
+  "rio", "skarbni", "oświat", "oswiat", "szkoł", "szkol", "przedszk", "nauczyc",
+  "zamówie", "zamowie", "przetarg", "unijn", "fundusz", "pomoc społ", "kontrol",
 ];
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -118,7 +123,7 @@ const matchesKeywords = (c: Candidate) => {
 // ---------- Claude ----------
 
 function buildPrompt(c: Candidate, categories: Category[]) {
-  return `Jesteś asystentem księgowych w Polsce (jednostki budżetowe, samorządy i firmy). Przeanalizuj wpis i odpowiedz WYŁĄCZNIE poprawnym JSON-em (bez komentarzy, bez bloku markdown).
+  return `Jesteś asystentem głównej księgowej / skarbnika w jednostce samorządu terytorialnego (JST) lub jednostce budżetowej w Polsce — np. urząd miasta lub gminy, starostwo, szkoła, przedszkole, zarząd dróg, MOPS. Przeanalizuj wpis i odpowiedz WYŁĄCZNIE poprawnym JSON-em (bez komentarzy, bez bloku markdown).
 
 Wpis:
 Źródło: ${c.source.name}
@@ -131,10 +136,10 @@ ${categories.map((k) => `- ${k.slug}: ${k.name}`).join("\n")}
 
 Zwróć JSON:
 {
-  "relevant": true/false — czy wpis dotyczy przepisów lub praktyki finansowo-księgowej, podatków, sprawozdawczości, finansów publicznych, płac/ZUS (w tym kasy fiskalne, KSeF, obowiązki przedsiębiorców; false dla polityki, debat o świadczeniach społecznych, porad życiowych),
+  "relevant": true/false — true TYLKO gdy wpis ma praktyczne znaczenie dla JST lub jednostki budżetowej: rachunkowość budżetowa, sprawozdawczość (Rb, bilans), budżet i WPF, klasyfikacja budżetowa, finanse publiczne, VAT i KSeF w JST (centralizacja VAT), podatki i opłaty lokalne (JST jako organ podatkowy), płace i ZUS w sferze budżetowej (JST jako pracodawca/płatnik), oświata (subwencja, wynagrodzenia nauczycieli), zamówienia publiczne, dotacje i środki UE, kontrola RIO/NIK. false dla tematów dotyczących wyłącznie firm (CIT, estoński CIT, ulgi dla przedsiębiorców, JDG, kasy fiskalne), osób prywatnych (PCC, PIT obywateli, emerytury), polityki i porad życiowych,
   "categories": ["slug", ...] — 1–2 najlepiej pasujące,
   "summary": "2–3 zdania po polsku: co się zmienia",
-  "impact": "1–2 zdania: co to zmienia w praktyce dla księgowości / kadr",
+  "impact": "1–2 zdania: co to zmienia w praktyce dla księgowości / kadr JST lub jednostki budżetowej",
   "effective_date": "RRRR-MM-DD" albo null — data wejścia w życie, tylko jeśli wynika z treści,
   "form": "symbol druku" albo null — tylko gdy wpis dotyczy konkretnego formularza / deklaracji / sprawozdania (np. "VAT-R", "PIT-11", "Rb-27S", "JPK_V7M", "ZUS DRA"),
   "qa": [{"question": "Kogo dotyczy?", "answer": "..."}, {"question": "Od kiedy?", "answer": "..."}, {"question": "Co muszę zrobić?", "answer": "..."}]
@@ -182,6 +187,69 @@ async function insertArticle(c: Candidate, fields: Record<string, unknown>) {
   return data.id as number;
 }
 
+// Zapisuje wynik AI: nowy wpis (insert) albo ponownie oceniony (update + nowe kategorie i Q&A)
+async function saveResult(c: Candidate, ai: AiResult, slugToId: Map<string, number>, existingId?: number) {
+  if (!ai.relevant) {
+    if (existingId) await db.from("articles").update({ status: "skipped" }).eq("id", existingId);
+    else await insertArticle(c, { status: "skipped" });
+    return false;
+  }
+
+  const fields = {
+    status: "done",
+    summary: ai.summary,
+    impact: ai.impact,
+    form_link: ai.form ? `https://druki.gofin.pl/search/?search_form[phrase]=${encodeURIComponent(ai.form)}` : null,
+    effective_date: /^\d{4}-\d{2}-\d{2}$/.test(ai.effective_date ?? "") ? ai.effective_date : null,
+  };
+  let id = existingId;
+  if (id) {
+    const { error } = await db.from("articles").update(fields).eq("id", id);
+    if (error) throw error;
+    await db.from("article_categories").delete().eq("article_id", id);
+    await db.from("article_qa").delete().eq("article_id", id);
+  } else {
+    id = await insertArticle(c, fields);
+  }
+
+  const catIds = ai.categories.map((s) => slugToId.get(s)).filter((x): x is number => !!x);
+  if (catIds.length === 0) catIds.push(slugToId.get("inne")!);
+  await db.from("article_categories").insert(catIds.map((category_id) => ({ article_id: id, category_id })));
+  await db.from("article_qa").insert(
+    ai.qa.slice(0, 3).map((q, sort) => ({ article_id: id, question: q.question, answer: q.answer, sort })),
+  );
+  return true;
+}
+
+// Ponowna ocena opublikowanych wpisów nowymi zasadami (np. po zmianie profilu na JST)
+async function reassess(sources: Source[], categories: Category[], slugToId: Map<string, number>) {
+  const { data, error } = await db
+    .from("articles")
+    .select("id, url, title, published_at, source_id")
+    .eq("status", "done")
+    .order("published_at", { ascending: false })
+    .limit(LIMIT);
+  if (error) throw error;
+  console.log(`Ponowna ocena: ${data.length} opublikowanych wpisów`);
+
+  let kept = 0, hidden = 0, failed = 0;
+  for (const a of data) {
+    const source = sources.find((s) => s.id === a.source_id) ?? { id: 0, name: "?", url: "", kind: "rss" as const };
+    const c: Candidate = { source, url: a.url, title: a.title, publishedAt: a.published_at ? new Date(a.published_at) : null, text: "" };
+    if (source.kind === "eli") c.text = a.title;
+    try {
+      await enrichText(c);
+      const ok = await saveResult(c, askClaude(buildPrompt(c, categories)), slugToId, a.id);
+      if (ok) kept++; else hidden++;
+      console.log(`  ${ok ? "✓ zostaje" : "– ukryty"}: ${a.title}`);
+    } catch (err) {
+      failed++;
+      console.error(`  ✗ ${a.title}: ${(err as Error).message.split("\n")[0]}`);
+    }
+  }
+  console.log(`Gotowe: zostaje ${kept}, ukryte ${hidden}, błędy ${failed}.`);
+}
+
 // ---------- przebieg ----------
 
 async function main() {
@@ -193,6 +261,8 @@ async function main() {
   ]);
   if (e1 || e2) throw e1 ?? e2;
   const slugToId = new Map(categories!.map((k) => [k.slug, k.id]));
+
+  if (REASSESS) return reassess(sources as Source[], categories!, slugToId);
 
   // 1. Pobierz wpisy ze wszystkich źródeł
   let candidates: Candidate[] = [];
@@ -225,28 +295,10 @@ async function main() {
   for (const c of queue.slice(0, LIMIT)) {
     try {
       await enrichText(c);
-      const ai = askClaude(buildPrompt(c, categories!));
-      if (!ai.relevant) {
-        await insertArticle(c, { status: "skipped" });
-        skipped++;
-        console.log(`  – pominięty przez AI: ${c.title}`);
-        continue;
-      }
-      const id = await insertArticle(c, {
-        status: "done",
-        summary: ai.summary,
-        impact: ai.impact,
-        form_link: ai.form ? `https://druki.gofin.pl/search/?search_form[phrase]=${encodeURIComponent(ai.form)}` : null,
-        effective_date: /^\d{4}-\d{2}-\d{2}$/.test(ai.effective_date ?? "") ? ai.effective_date : null,
-      });
-      const catIds = ai.categories.map((s) => slugToId.get(s)).filter((x): x is number => !!x);
-      if (catIds.length === 0) catIds.push(slugToId.get("inne")!);
-      await db.from("article_categories").insert(catIds.map((category_id) => ({ article_id: id, category_id })));
-      await db.from("article_qa").insert(
-        ai.qa.slice(0, 3).map((q, sort) => ({ article_id: id, question: q.question, answer: q.answer, sort })),
-      );
-      done++;
-      console.log(`  ✓ ${c.title}`);
+      const saved = await saveResult(c, askClaude(buildPrompt(c, categories!)), slugToId);
+      if (saved) done++;
+      else skipped++;
+      console.log(`  ${saved ? "✓" : "– pominięty przez AI:"} ${c.title}`);
     } catch (err) {
       failed++;
       console.error(`  ✗ ${c.title}: ${(err as Error).message.split("\n")[0]}`);

@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "PrzepisFK",
   description:
-    "Zmiany w przepisach finansowo-księgowych, streszczone przez AI i dopasowane do Twoich obszarów.",
+    "Zmiany w przepisach dla JST i jednostek budżetowych, streszczone przez AI i dopasowane do Twoich obszarów.",
 };
 
 export default function RootLayout({
