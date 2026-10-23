@@ -72,7 +72,7 @@ const db = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false
 
 // ---------- typy ----------
 
-type Source = { id: number; name: string; url: string; kind: "rss" | "eli" | "sejm" | "manual" | "page" };
+type Source = { id: number; name: string; url: string; kind: "rss" | "eli" | "sejm" | "manual" | "page" | "list" | "forms"; category_slug?: string | null };
 type Stage = "news" | "act" | "draft";
 type Category = { id: number; slug: string; name: string; description: string | null };
 type Candidate = {
@@ -102,7 +102,7 @@ type AiResult = {
 
 const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
 const since = (kind: Source["kind"]) =>
-  kind === "rss" ? daysAgo(DAYS) : kind === "page" ? new Date(0) : (FROM ?? daysAgo(LAW_DAYS));
+  kind === "rss" || kind === "list" ? daysAgo(DAYS) : kind === "page" ? new Date(0) : (FROM ?? daysAgo(LAW_DAYS));
 const rss = new Parser({ timeout: 20000, headers: { "User-Agent": "PrzepisFK/1.0" } });
 
 async function fromRss(source: Source): Promise<Candidate[]> {
@@ -179,6 +179,90 @@ async function fromPage(source: Source): Promise<Candidate[]> {
   return [...found.values()];
 }
 
+// Strona z listą artykułów bez RSS (np. gofin.pl/aktualnosci-i-sygnaly):
+// artykuły to linki „<ścieżka listy>/<numer>/<tytuł>”
+async function fromList(source: Source): Promise<Candidate[]> {
+  const res = await fetch(source.url, { headers: { "User-Agent": "PrzepisFK/1.0" }, signal: AbortSignal.timeout(30000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const html = await res.text();
+  const base = new URL(source.url);
+  const article = new RegExp(`^${base.pathname.replace(/\/$/, "")}/\\d+/`);
+  const found = new Map<string, Candidate>();
+
+  for (const [, href, inner] of html.matchAll(/<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)) {
+    const url = new URL(href, base);
+    const title = stripHtml(inner);
+    if (url.host !== base.host || !article.test(url.pathname) || title.length < 10) continue;
+    url.search = url.hash = "";
+    const key = url.toString();
+    if (!found.has(key)) found.set(key, { source, url: key, title, publishedAt: new Date(), text: "", stage: "news" });
+  }
+  return [...found.values()];
+}
+
+// Dział Druków Gofin (np. sprawozdawczość budżetowa): każda nowa wersja druku to osobny wpis.
+// Strona druku ma tabelę „Wersje druku” z datą „Okres od”; bierzemy wersje z ostatnich 90 dni i przyszłe.
+const checkedForms = new Set<string>();
+async function fromForms(source: Source): Promise<Candidate[]> {
+  const get = async (url: string) => {
+    const res = await fetch(url, { headers: { "User-Agent": "PrzepisFK/1.0" }, signal: AbortSignal.timeout(30000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.text();
+  };
+  const base = new URL(source.url);
+  const links = (html: string, re: RegExp) => [...html.matchAll(re)].map((m) => new URL(m[1], base).toString());
+  const sectionRe = /href="(\/dzial\/\d+\/[a-z0-9-]+)"/g;
+  const formRe = /href="(\/dzial\/\d+\/druk\/\d+\/[^"#?]+)"/g;
+
+  // Dział dzieli się na poddziały; menu (działy ze strony głównej) pomijamy, poddziały odwiedzamy do 2 poziomów w głąb
+  const menu = new Set(links(await get(base.origin), sectionRe));
+  const forms = new Set<string>();
+  const visited = new Set<string>();
+  let level = [source.url];
+  for (let depth = 0; depth < 3 && level.length; depth++) {
+    const next: string[] = [];
+    for (const section of level) {
+      if (visited.has(section)) continue;
+      visited.add(section);
+      const html = await get(section);
+      links(html, formRe).forEach((f) => forms.add(f));
+      next.push(...links(html, sectionRe).filter((s) => !menu.has(s) && !visited.has(s)));
+    }
+    level = [...new Set(next)];
+  }
+  for (const f of checkedForms) forms.delete(f); // ten sam druk bywa w kilku działach — sprawdza go pierwsza grupa
+  forms.forEach((f) => checkedForms.add(f));
+  console.log(`  ${source.name}: ${visited.size} działów, ${forms.size} druków`);
+  const from = daysAgo(LAW_DAYS).toISOString().slice(0, 10);
+  const out: Candidate[] = [];
+
+  for (const url of forms) {
+    try {
+      const text = stripHtml((await get(url)).replace(/<(script|style)[\s\S]*?<\/\1>/gi, " "));
+      // tabela wersji jest na końcu strony, przed stopką „Pomocniki Księgowego”
+      const versions = (text.split(/Okres od Okres do/i).pop() ?? "").split("Pomocniki Księgowego")[0];
+      const since = [...versions.matchAll(/\b(\d{4}-\d{2}-\d{2})\b/g)].map((m) => m[1]).sort().pop();
+      if (!since || since < from) continue;
+      const name = text.match(/Powrót (.+?) Zobacz dostępne wersje/)?.[1] ?? url;
+      const symbol = name.split(" - ")[0];
+      const info = text.match(/Uwagi od redakcji: (.+?) WERSJE DRUKU/)?.[1] ?? "";
+      out.push({
+        source,
+        url: `${url}#wersja-${since}`,
+        title: `Nowa wersja druku ${symbol} (obowiązuje od ${since})`,
+        publishedAt: new Date(),
+        text: `Druk: ${name}. Nowa wersja obowiązuje od ${since}. ${info}`.slice(0, 3000),
+        stage: "news",
+        effectiveDate: since,
+      });
+    } catch (err) {
+      console.error(`  ✗ ${url}: ${(err as Error).message}`);
+    }
+    await new Promise((r) => setTimeout(r, 300)); // bez zasypywania serwera zapytaniami
+  }
+  return out;
+}
+
 // Pierwsze odczytanie strony: historię oznaczamy jako znaną, zostawiamy tylko bieżące lata i tematy śledzone
 async function baselinePage(source: Source, items: Candidate[]) {
   const { count } = await db.from("articles").select("id", { count: "exact", head: true }).eq("source_id", source.id);
@@ -219,8 +303,11 @@ async function eliEntryIntoForce(c: Candidate) {
 
 async function enrichText(c: Candidate) {
   await eliEntryIntoForce(c);
-  if (c.source.kind === "page") {
+  if (c.source.kind === "page" || c.source.kind === "list") {
     c.text = (await readUrl(c.url)).text;
+    // gofin: „… z dnia 22.10.2026, strona 2” — data wydania artykułu
+    const d = c.source.kind === "list" && c.text.match(/z dnia (\d{2})\.(\d{2})\.(\d{4})/);
+    if (d) c.publishedAt = new Date(`${d[3]}-${d[2]}-${d[1]}`);
     return;
   }
   if (c.text.length >= 200 || c.source.kind !== "rss") return;
@@ -238,7 +325,7 @@ async function enrichText(c: Candidate) {
 
 const matchesKeywords = (c: Candidate) => {
   const t = `${c.title} ${c.text}`.toLowerCase();
-  return c.stage !== "news" || c.source.kind === "page" || KEYWORDS.some((k) => t.includes(k)) || trackedTopicsIn(t).length > 0;
+  return c.stage !== "news" || c.source.kind === "page" || c.source.kind === "forms" || KEYWORDS.some((k) => t.includes(k)) || trackedTopicsIn(t).length > 0;
 };
 
 // ---------- Claude ----------
@@ -346,8 +433,8 @@ async function saveResult(c: Candidate, ai: AiResult, slugToId: Map<string, numb
     impact: ai.impact,
     system_impact: ai.system_impact ?? null,
     impact_types: (ai.impact_types ?? []).filter(isImpactType).slice(0, 3),
-    priority: urgency(isPriority(ai.priority ?? "") ? ai.priority! : "medium", effective_date, c.source.kind === "rss"),
-    form_link: ai.form ? `https://druki.gofin.pl/search/?search_form[phrase]=${encodeURIComponent(ai.form)}` : null,
+    priority: urgency(isPriority(ai.priority ?? "") ? ai.priority! : "medium", effective_date, c.source.kind === "rss" || c.source.kind === "list"),
+    form_link: c.source.kind === "forms" ? c.url.split("#")[0] : ai.form ? `https://druki.gofin.pl/search/?search_form[phrase]=${encodeURIComponent(ai.form)}` : null,
     effective_date,
   };
   let id = existingId;
@@ -360,7 +447,8 @@ async function saveResult(c: Candidate, ai: AiResult, slugToId: Map<string, numb
     id = await insertArticle(c, fields);
   }
 
-  const catIds = ai.categories.map((s) => slugToId.get(s)).filter((x): x is number => !!x);
+  // obszar przypisany do źródła (np. grupa druków „JPK” → JPK) jest zawsze pierwszy
+  const catIds = [...new Set([c.source.category_slug, ...ai.categories].map((s) => slugToId.get(s ?? "")).filter((x): x is number => !!x))].slice(0, 2);
   if (catIds.length === 0) catIds.push(slugToId.get("inne")!);
   await db.from("article_categories").insert(catIds.map((category_id) => ({ article_id: id, category_id })));
   await db.from("article_qa").insert(
@@ -390,7 +478,10 @@ async function readUrl(url: string) {
   const meta = (name: string) =>
     html.match(new RegExp(`<meta[^>]+(?:property|name)="${name}"[^>]+content="([^"]*)"`, "i"))?.[1] ?? "";
   const title = meta("og:title") || (html.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1] ?? "");
-  const body = stripHtml(html.replace(/<(script|style|nav|header|footer)[\s\S]*?<\/\1>/gi, " "));
+  // treść zaczyna się od <article> / <main> albo (gofin) od bloku „Źródło: … z dnia …” — menu przed nią pomijamy
+  const starts = ["<article", "<main", 'class="source"'].map((m) => html.indexOf(m)).filter((i) => i >= 0);
+  const content = starts.length ? html.slice(Math.min(...starts)) : html;
+  const body = stripHtml(content.replace(/<(script|style|nav|header|footer)[\s\S]*?<\/\1>/gi, " "));
   return { title: stripHtml(title), text: `${meta("og:description") || meta("description")} ${body}`.slice(0, 8000) };
 }
 
@@ -521,7 +612,7 @@ async function refreshUrgency() {
   if (error) return console.error(`  ✗ pilność: ${error.message}`);
   let changed = 0;
   for (const a of data) {
-    const press = (a.sources as unknown as { kind: string } | null)?.kind === "rss";
+    const press = ["rss", "list"].includes((a.sources as unknown as { kind: string } | null)?.kind ?? "");
     const priority = urgency(a.priority ?? "medium", a.effective_date, press);
     if (priority === a.priority) continue;
     await db.from("articles").update({ priority }).eq("id", a.id);
@@ -537,7 +628,7 @@ async function main() {
   console.log(`PrzepisFK: limit ${LIMIT}, ostatnie ${DAYS} dni, model ${CLAUDE_MODEL}`);
 
   const [{ data: sources, error: e1 }, { data: categories, error: e2 }] = await Promise.all([
-    db.from("sources").select("id, name, url, kind, active"),
+    db.from("sources").select("id, name, url, kind, active, category_slug").order("id"),
     db.from("categories").select("id, slug, name, description").order("sort"),
   ]);
   if (e1 || e2) throw e1 ?? e2;
@@ -556,6 +647,8 @@ async function main() {
         s.kind === "eli" ? await fromEli(s)
         : s.kind === "sejm" ? await fromSejm(s)
         : s.kind === "page" ? await baselinePage(s, await fromPage(s))
+        : s.kind === "list" ? await fromList(s)
+        : s.kind === "forms" ? await fromForms(s)
         : await fromRss(s);
       const from = since(s.kind);
       const fresh = items.filter((c) => !c.publishedAt || c.publishedAt >= from);
@@ -570,6 +663,15 @@ async function main() {
   const known = await existingUrls(candidates.map((c) => c.url));
   const seen = new Set<string>();
   candidates = candidates.filter((c) => !known.has(c.url) && !seen.has(c.url) && seen.add(c.url));
+
+  // Lista artykułów podaje tylko tytuły — treść czytamy przed filtrem słów kluczowych
+  for (const c of candidates.filter((x) => x.source.kind === "list")) {
+    try {
+      await enrichText(c);
+    } catch (err) {
+      console.error(`  ✗ ${c.url}: ${(err as Error).message}`);
+    }
+  }
 
   // 3. Filtr słów kluczowych — odrzucone zapisujemy jako 'skipped', żeby nie wracały
   const offTopic = candidates.filter((c) => !matchesKeywords(c));

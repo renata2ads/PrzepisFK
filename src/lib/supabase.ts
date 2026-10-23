@@ -70,6 +70,22 @@ export async function getUpcoming({ from, to, categoryId }: { from: string; to: 
   return data as unknown as Article[];
 }
 
+// Druki: nowe wersje druków ze źródeł „Druki · <grupa>” (grupa = nazwa źródła bez przedrostka)
+export const FORMS_PREFIX = "Druki · ";
+export async function getFormVersions() {
+  const { data: sources, error: e1 } = await supabase.from("sources").select("id, name").like("name", `${FORMS_PREFIX}%`);
+  if (e1) throw e1;
+  if (!sources.length) return [];
+  const { data, error } = await supabase
+    .from("articles")
+    .select(ARTICLE_FIELDS)
+    .in("source_id", sources.map((s) => s.id))
+    .order("effective_date", { ascending: false, nullsFirst: false })
+    .limit(300);
+  if (error) throw error;
+  return data as unknown as Article[];
+}
+
 export const PAGE_SIZE = 30;
 
 type ArticleFilter = { categoryIds?: number[]; articleIds?: number[]; query?: string; stages?: Stage[]; page?: number };
