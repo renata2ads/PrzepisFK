@@ -53,6 +53,7 @@ type AiResult = {
   summary: string;
   impact: string;
   effective_date: string | null;
+  form: string | null;
   qa: { question: string; answer: string }[];
 };
 
@@ -135,6 +136,7 @@ Zwróć JSON:
   "summary": "2–3 zdania po polsku: co się zmienia",
   "impact": "1–2 zdania: co to zmienia w praktyce dla księgowości / kadr",
   "effective_date": "RRRR-MM-DD" albo null — data wejścia w życie, tylko jeśli wynika z treści,
+  "form": "symbol druku" albo null — tylko gdy wpis dotyczy konkretnego formularza / deklaracji / sprawozdania (np. "VAT-R", "PIT-11", "Rb-27S", "JPK_V7M", "ZUS DRA"),
   "qa": [{"question": "Kogo dotyczy?", "answer": "..."}, {"question": "Od kiedy?", "answer": "..."}, {"question": "Co muszę zrobić?", "answer": "..."}]
 }
 Nie zmyślaj faktów spoza treści — gdy czegoś nie wiadomo, napisz to wprost.`;
@@ -156,8 +158,8 @@ function askClaude(prompt: string): AiResult {
 
 async function existingUrls(urls: string[]) {
   const found = new Set<string>();
-  for (let i = 0; i < urls.length; i += 100) {
-    const { data, error } = await db.from("articles").select("url").in("url", urls.slice(i, i + 100));
+  for (let i = 0; i < urls.length; i += 20) {
+    const { data, error } = await db.from("articles").select("url").in("url", urls.slice(i, i + 20));
     if (error) throw error;
     data.forEach((r) => found.add(r.url));
   }
@@ -234,6 +236,7 @@ async function main() {
         status: "done",
         summary: ai.summary,
         impact: ai.impact,
+        form_link: ai.form ? `https://druki.gofin.pl/search/?search_form[phrase]=${encodeURIComponent(ai.form)}` : null,
         effective_date: /^\d{4}-\d{2}-\d{2}$/.test(ai.effective_date ?? "") ? ai.effective_date : null,
       });
       const catIds = ai.categories.map((s) => slugToId.get(s)).filter((x): x is number => !!x);
