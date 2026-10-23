@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArticleCard } from "@/components/ArticleCard";
 import { SiteHeader } from "@/components/SiteHeader";
 import { getArticles, getCategories } from "@/lib/supabase";
+import { createSessionClient } from "@/lib/supabase-server";
 
 export const revalidate = 300; // odśwież listę co 5 minut
 
@@ -11,7 +12,14 @@ export default async function Home({ searchParams }: Props) {
   const { k, q } = await searchParams;
   const categories = await getCategories();
   const active = categories.find((c) => c.slug === k);
-  const articles = await getArticles({ categoryId: active?.id, query: q });
+  const articles = await getArticles({ categoryIds: active ? [active.id] : undefined, query: q });
+
+  // zalogowany widzi przyciski zakładek
+  const supabase = await createSessionClient();
+  const { data } = await supabase.auth.getUser();
+  const bookmarkIds = data.user
+    ? new Set((await supabase.from("bookmarks").select("article_id")).data?.map((b) => b.article_id))
+    : null;
 
   const href = (slug?: string) => {
     const p = new URLSearchParams();
@@ -64,7 +72,7 @@ export default async function Home({ searchParams }: Props) {
               {active ? ` w kategorii ${active.name}` : ""}.
             </p>
           ) : (
-            articles.map((a) => <ArticleCard key={a.id} article={a} />)
+            articles.map((a) => <ArticleCard key={a.id} article={a} bookmarked={bookmarkIds?.has(a.id)} />)
           )}
         </div>
       </main>

@@ -1,9 +1,11 @@
+import { toggleBookmark } from "@/app/ustawienia/actions";
 import type { Article } from "@/lib/supabase";
 
 const dateFmt = new Intl.DateTimeFormat("pl-PL", { day: "numeric", month: "long", year: "numeric" });
 const formatDate = (d: string) => dateFmt.format(new Date(d));
 
-export function ArticleCard({ article }: { article: Article }) {
+// bookmarked: undefined = niezalogowany (bez przycisku zakładki)
+export function ArticleCard({ article, bookmarked }: { article: Article; bookmarked?: boolean }) {
   const qa = [...article.article_qa].sort((a, b) => a.sort - b.sort);
 
   return (
@@ -60,13 +62,27 @@ export function ArticleCard({ article }: { article: Article }) {
         </details>
       )}
 
-      <p className="mt-3 text-xs text-[#5b6478]">
-        Streszczenie przygotowane przez AI —{" "}
-        <a href={article.url} target="_blank" rel="noopener noreferrer" className="underline">
-          przeczytaj źródło
-        </a>
-        .
-      </p>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-[#5b6478]">
+          Streszczenie przygotowane przez AI —{" "}
+          <a href={article.url} target="_blank" rel="noopener noreferrer" className="underline">
+            przeczytaj źródło
+          </a>
+          .
+        </p>
+        {bookmarked !== undefined && (
+          <form action={toggleBookmark.bind(null, article.id, bookmarked)}>
+            <button
+              aria-pressed={bookmarked}
+              className={`rounded-md px-3 py-1 text-xs font-semibold ring-1 ${
+                bookmarked ? "bg-[#14213d] text-white ring-[#14213d]" : "ring-[#dde1ea] hover:ring-[#c2410c]"
+              }`}
+            >
+              {bookmarked ? "★ Zapisane" : "☆ Zapisz na później"}
+            </button>
+          </form>
+        )}
+      </div>
     </article>
   );
 }

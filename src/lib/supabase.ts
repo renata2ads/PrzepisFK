@@ -32,21 +32,24 @@ export async function getCategories() {
   return data as Category[];
 }
 
-export async function getArticles({ categoryId, query }: { categoryId?: number; query?: string }) {
+type ArticleFilter = { categoryIds?: number[]; articleIds?: number[]; query?: string };
+
+export async function getArticles({ categoryIds, articleIds, query }: ArticleFilter) {
   let req = supabase
     .from("articles")
     .select(ARTICLE_FIELDS)
     .order("published_at", { ascending: false, nullsFirst: false })
     .limit(50);
 
-  if (categoryId) {
+  if (categoryIds) {
     const { data: links, error } = await supabase
       .from("article_categories")
       .select("article_id")
-      .eq("category_id", categoryId);
+      .in("category_id", categoryIds);
     if (error) throw error;
-    req = req.in("id", links.map((l) => l.article_id));
+    req = req.in("id", [...new Set(links.map((l) => l.article_id))]);
   }
+  if (articleIds) req = req.in("id", articleIds);
 
   // znaki specjalne składni filtra PostgREST usuwamy z frazy
   const q = query?.replace(/[%,()*\\]/g, " ").trim();
