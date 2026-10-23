@@ -21,6 +21,8 @@ Każdy etap kończy się **działającą** aplikacją i commitem. Kod pisze Clau
 | 9 — Testy i prezentacja | ✅ | README, aktualne wymagania i karty, lista kontrolna MVP |
 | 10 — Radar dla kierowników produktu | ✅ | obszary produktowe (FK, Wydatki, Budżetowanie, WIND, KP, JPK, Inne), ocena wpływu na system, pilność, Terminarz, obieg weryfikacji, słowa kluczowe — migracje 007–009 |
 
+| 11 — Źródła GOFIN i druki | ✅ | Aktualności i sygnały (lista artykułów), Druki Gofin w 10 grupach — nowe wersje druków, zakładka „Druki”, grupy w Ustawieniach — migracje 010–013 |
+
 **Zmiany zakresu w trakcie:** profil zawężony do JST i jednostek budżetowych; nowe źródła — Dziennik Ustaw wstecz od 2026-01-01, projekty ustaw z API Sejmu, strona MF ze strukturami JPK; funkcja „Zgłoś link” zamiast pytań do wpisów. Następnie **zmiana celu**: aplikacja jest impulsem dla kierowników produktu u dostawcy oprogramowania — kategorie księgowe zastąpione obszarami produktowymi, AI ocenia wpływ na system, a kierownik zatwierdza „Wpływa / Nie wpływa”. JPK wydzielone jako osobny obszar (osobny zespół).
 
 **Etap 10 — co powstało:**
@@ -32,7 +34,7 @@ Każdy etap kończy się **działającą** aplikacją i commitem. Kod pisze Clau
 - Ponowna ocena zawężana flagami `--etap act`, `--fraza JPK` (oszczędza limit Pro).
 - Next.js 16 (middleware → `src/proxy.ts`), `npm audit` — 0 podatności.
 
-**Lekcje:** (1) RSS nie wystarczy dla przepisów — trzeba łączyć API (ELI, Sejm), obserwowanie stron i zgłoszenia ręczne; (2) polityka RLS nie może liczyć wierszy własnej tabeli (rekurencja) — liczenie w funkcji `security definer`; (3) dwa przebiegi skryptu naraz dublowały pracę — blokada pliku; (4) gov.pl wstawia niewidoczne znaki w nazwy (`JPK&#8203;_MAG`); (5) pełna ponowna ocena wyczerpuje limit Pro — przeoceniać tylko wybrane wpisy; (6) to, co da się policzyć (data, pilność), liczy kod, nie AI — wynik jest powtarzalny i nie kosztuje limitu.
+**Lekcje:** (1) RSS nie wystarczy dla przepisów — trzeba łączyć API (ELI, Sejm), obserwowanie stron i zgłoszenia ręczne; (2) polityka RLS nie może liczyć wierszy własnej tabeli (rekurencja) — liczenie w funkcji `security definer`; (3) dwa przebiegi skryptu naraz dublowały pracę — blokada pliku; (4) gov.pl wstawia niewidoczne znaki w nazwy (`JPK&#8203;_MAG`); (5) pełna ponowna ocena wyczerpuje limit Pro — przeoceniać tylko wybrane wpisy; (6) to, co da się policzyć (data, pilność), liczy kod, nie AI — wynik jest powtarzalny i nie kosztuje limitu; (7) strona poddziału na Drukach Gofin pokazuje całe drzewo działu nadrzędnego — przeszukiwanie w głąb trzeba ograniczyć (`recursive`), a szczegółowe poddziały sprawdzać przed ogólnymi; (8) przy stronach bez RSS treść artykułu trzeba wyciąć spod menu (gofin: blok „Źródło: …”).
 
 ---
 

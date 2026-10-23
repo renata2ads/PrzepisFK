@@ -36,7 +36,8 @@ Wzorowane na karcie technologii **NewsRadar** — ten sam stos, inna dziedzina. 
 | PIT.pl | `rss` | podatki, PIT płatnika, ZUS |
 | MF — gov.pl/web/kas/struktury-jpk | `page` | nowe broszury i struktury JPK (np. JPK_MAG(2)) — strona bez RSS, wykrywanie nowych PDF |
 | Zgłoszone linki | `manual` | materiały spoza źródeł (RCL, MF, RIO, interpretacje) zgłaszane przez użytkowników |
-| Druki Gofin | link | brak RSS — przy wpisach o formularzach link do wyszukiwarki druku |
+| GOFIN — Aktualności i sygnały | `list` | artykuły Gazety Podatkowej — strona z listą artykułów bez RSS, skrypt czyta treść i datę wydania |
+| Druki Gofin — 10 grup | `forms` | **nowe wersje druków** (tabela „Wersje druku”, data „Okres od”) w grupach: sprawozdania budżetowe, sprawozdania finansowe, rachunkowość, JPK, VAT i KSeF, PIT płatnika, ZUS/PPK/PFRON, egzekucja i ordynacja, podatki lokalne, GUS; ok. 1280 druków sprawdzanych codziennie |
 
 Sprawdzone i niedostępne automatycznie: RCL / legislacja.gov.pl, podatki.gov.pl, ZUS, Gazeta Prawna, nowaklasyfikacja.pl, jpk.info.pl (brak RSS/API) — obejście: „Zgłoś link” albo źródło typu `page`.
 
@@ -89,7 +90,10 @@ Sprawdzone i niedostępne automatycznie: RCL / legislacja.gov.pl, podatki.gov.pl
 | **Strona www** |||||
 | WB-21 | Strona publiczna | Wpisy i terminarz publicznie; feed, weryfikacja, zakładki, ustawienia, zgłoszenia — po zalogowaniu. | Must | ✅ |
 | WB-22 | Responsywność | Telefon i komputer (sprawdzone przy 390 px). | Must | ✅ |
-| WB-29 | Druki | Link „Sprawdź druk w Druki Gofin” przy wpisach o konkretnym formularzu. | Could | ✅ |
+| WB-29 | Link do druku | Link „Sprawdź druk w Druki Gofin” przy wpisach o konkretnym formularzu. | Could | ✅ |
+| WB-37 | Nowe wersje druków | Codzienne sprawdzanie Druków Gofin; nowa wersja druku = wpis z datą „obowiązuje od”, oceną wpływu i obszarem grupy. Okno 90 dni wstecz + przyszłe. | Must | ✅ |
+| WB-38 | Zakładka „Druki” | Trzecia zakładka obok zmian i projektów przepisów; filtr grup druków. Druki nie mieszają się ze „Zmianami w przepisach”. | Must | ✅ |
+| WB-39 | Grupy druków w Ustawieniach | Użytkownik wybiera grupy druków — nowe wersje trafiają do Mojego PrzepisFK i e-maila. | Should | ✅ |
 
 Priorytety: **Must** — MVP na koniec kursu, **Should** — jeśli starczy czasu, **Could** — rozwój.
 
@@ -97,11 +101,11 @@ Priorytety: **Must** — MVP na koniec kursu, **Should** — jeśli starczy czas
 
 ```
 [Twój komputer, codziennie 8:00 — Harmonogram zadań]
-  zgłoszone linki · MF struktury JPK · RSS · Dziennik Ustaw (+ data z API ELI) · Sejm
+  zgłoszone linki · MF struktury JPK · RSS · GOFIN · Druki Gofin (nowe wersje) · Dziennik Ustaw (+ data z API ELI) · Sejm
         → filtr JST (słowa kluczowe + tematy śledzone)
         → claude -p (Haiku): ocena, obszary produktowe, streszczenie, wpływ na system, Q&A, druk
         → pilność z daty (≤ 3 mies.) → Supabase → Discord (webhook) · e-mail (Resend)
-[Vercel]  strona www ← Supabase (RLS) → „Mój PrzepisFK” (Do weryfikacji / Wpływa), Terminarz, „Zgłoś link”
+[Vercel]  strona www ← Supabase (RLS) → Zmiany · Projekty · Druki, „Mój PrzepisFK” (Do weryfikacji / Wpływa), Terminarz, „Zgłoś link”
 ```
 
 ## 4. Wymagania techniczne i organizacyjne
@@ -119,16 +123,16 @@ Priorytety: **Must** — MVP na koniec kursu, **Should** — jeśli starczy czas
 
 ## 5. Model danych
 
-- `sources` — źródła (nazwa, url, rodzaj `rss`/`eli`/`sejm`/`page`/`manual`, aktywne); publicznie tylko nazwa
+- `sources` — źródła (nazwa, url, rodzaj `rss`/`eli`/`sejm`/`page`/`list`/`forms`/`manual`, aktywne, obszar wymuszony `category_slug`, przeszukiwanie w głąb `recursive`); publicznie tylko nazwa — grupa druku to nazwa „Druki · <grupa>”
 - `articles` — wpisy (url unikalny, tytuł, źródło, data, rodzaj `news`/`act`/`draft`, streszczenie, wpływ, **wpływ na system, rodzaje zmian, pilność**, data wejścia w życie, link do druku, status, wysyłka na Discord)
 - `article_qa` — pytania i odpowiedzi AI
 - `categories`, `article_categories` — 7 obszarów produktowych z opisem zakresu (podpowiedź dla AI) i przypisania
 - `article_reviews` — ocena wpływu per wpis i obszar („Wpływa” / „Nie wpływa”, komentarz, kto, kiedy)
-- `profiles` — użytkownik (Supabase Auth), częstotliwość e-maili, **słowa kluczowe**
+- `profiles` — użytkownik (Supabase Auth), częstotliwość e-maili, **słowa kluczowe**, **grupy druków**
 - `user_categories`, `bookmarks` — preferencje i zakładki
 - `submissions` — zgłoszone linki ze statusem i odpowiedzią dla zgłaszającego
 
-Migracje: `supabase/schema.sql` + `supabase/migrations/002–009`.
+Migracje: `supabase/schema.sql` + `supabase/migrations/002–013`.
 
 ## 6. Kryteria akceptacji MVP
 

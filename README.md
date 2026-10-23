@@ -17,6 +17,7 @@ Radar zmian w przepisach dla **kierowników produktu** u dostawcy oprogramowania
 - **Konto użytkownika** — rejestracja, logowanie, reset hasła; wybór obszarów i własnych słów kluczowych, feed „Mój PrzepisFK”, zakładki „Zapisz na później”, usunięcie konta.
 - **Zgłoś link** — zalogowany użytkownik zgłasza materiał spoza źródeł (projekt z RCL, komunikat MF, stanowisko RIO, PDF); AI streszcza go przy najbliższym przebiegu.
 - **Powiadomienia** — e-mail z podsumowaniem (codziennie lub co tydzień, Resend) i nowe wpisy na kanale Discord.
+- **Druki** — trzecia zakładka: nowe wersje druków z Druków Gofin (tabela „Wersje druku”) w 10 grupach (sprawozdania budżetowe, sprawozdania finansowe, JPK, VAT i KSeF, PIT płatnika, ZUS/PPK/PFRON…); grupy do wyboru w Ustawieniach.
 - **Link do Druków Gofin** przy wpisach o konkretnym formularzu (PIT-11, PIT-4R, Rb-27S…).
 
 ## Jak to działa
@@ -42,7 +43,7 @@ Next.js 16 · TypeScript · Tailwind CSS · Supabase (Postgres, Auth, Row Level 
 Wymagania: Node.js 20+, zalogowany [Claude Code](https://claude.com/claude-code), projekt Supabase.
 
 1. `npm install`
-2. Baza: w Supabase → SQL Editor uruchom po kolei `supabase/schema.sql` i pliki z `supabase/migrations/` (002–009).
+2. Baza: w Supabase → SQL Editor uruchom po kolei `supabase/schema.sql` i pliki z `supabase/migrations/` (002–013).
 3. Skopiuj `.env.example` do `.env.local` i uzupełnij:
    | Zmienna | Gdzie |
    |---|---|
@@ -67,7 +68,7 @@ npm run fetch -- --powiadomienia       # tylko Discord i e-mail
 
 Automat: `scripts/run-fetch.bat` w Harmonogramie zadań Windows (codziennie 8:00), log w `logs/fetch.log`. Blokada `logs/fetch.lock` nie pozwala uruchomić dwóch przebiegów naraz.
 
-Nowe źródło dodaje się wierszem w tabeli `sources` — rodzaj `rss` (kanał RSS/Atom), `eli` (Dziennik Ustaw), `sejm` (druki sejmowe) albo `page` (strona bez RSS, z której zbieramy nowe pliki PDF).
+Nowe źródło dodaje się wierszem w tabeli `sources` — rodzaj `rss` (kanał RSS/Atom), `eli` (Dziennik Ustaw), `sejm` (druki sejmowe) albo `page` (strona bez RSS, z której zbieramy nowe pliki PDF), `list` (strona z listą artykułów, np. GOFIN — Aktualności i sygnały) albo `forms` (dział Druków Gofin — nowe wersje druków; nazwa „Druki · <grupa>”, `category_slug` = obszar, `recursive` = przeszukiwanie poddziałów). Sprawdzenie ok. 1280 druków wydłuża przebieg o ok. 7 minut.
 
 ## Ograniczenia
 

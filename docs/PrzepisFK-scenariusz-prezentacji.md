@@ -1,11 +1,11 @@
-# PrzepisFK — scenariusz prezentacji (ok. 10 minut)
+# PrzepisFK — scenariusz prezentacji (ok. 11 minut)
 
 **Cel pokazu:** pokazać, że aplikacja rozwiązuje prawdziwy problem kierownika produktu, działa w internecie i powstała z Claude Code.
 
 ## Przygotowanie (dzień wcześniej)
 
 - [ ] Rano przebieg skryptu zakończony bez błędów (`logs/fetch.log`) — są świeże wpisy.
-- [ ] Zalogowana w przeglądarce na swoje konto; w Ustawieniach zaznaczone obszary **FK** i **JPK** oraz słowa kluczowe, np. `Rb-27S, MT940`.
+- [ ] Zalogowana w przeglądarce na swoje konto; w Ustawieniach zaznaczone obszary **FK** i **JPK**, grupy druków (np. Sprawozdania budżetowe) oraz słowa kluczowe, np. `Rb-27S, MT940`.
 - [ ] Jeden wpis oceniony jako „Wpływa” z komentarzem, kilka wpisów czeka w „Do weryfikacji”.
 - [ ] Otwarte karty przeglądarki: strona główna, `/terminarz`, „Mój PrzepisFK”, kanał Discord, skrzynka z e-mailem PrzepisFK, karta produktu (`docs/przepisfk-karta-produktu.html`).
 - [ ] Terminal w folderze `przepisfk` (do pokazania skryptu).
@@ -25,6 +25,13 @@
 - Wyszukaj frazę, np. `KSeF`.
 
 > „Pilność nie jest zgadywana przez AI — liczy ją kod: zmiana w akcie prawnym, z wpływem na system i najwyżej 3 miesiące do wejścia w życie. Tyle co najmniej trwa dostosowanie systemu.”
+
+## 2a. Druki (1 min) — zakładka „Druki”
+
+- Pokaż grupy: Sprawozdania budżetowe, Sprawozdania finansowe, JPK, VAT i KSeF…
+- Otwórz nową wersję druku: data „obowiązuje od”, wpływ na system, link prosto do druku.
+
+> „Druki Gofin nie mają RSS. Skrypt codziennie sprawdza ok. 1280 druków i wyłapuje nową wersję — np. nowy wzór Rb-27S — zanim klient zapyta, czy system go obsługuje.”
 
 ## 3. Terminarz (1 min) — /terminarz
 
@@ -51,7 +58,7 @@
 ## 6. Jak to działa w środku (2 min) — karta technologii + terminal
 
 - Karta technologii: **Next.js na Vercelu → Supabase (baza, logowanie, RLS) ← lokalny skrypt z Claude**.
-- Źródła: Dziennik Ustaw (API ELI — z datą wejścia w życie), projekty ustaw z API Sejmu, RSS Infor i PIT.pl, strona MF ze strukturami JPK.
+- Źródła: Dziennik Ustaw (API ELI — z datą wejścia w życie), projekty ustaw z API Sejmu, RSS Infor i PIT.pl, GOFIN i Druki Gofin (strony bez RSS), strona MF ze strukturami JPK.
 - W terminalu pokaż (bez uruchamiania pełnego przebiegu): `npm run fetch -- --pilnosc` — trwa kilka sekund.
 
 > „AI działa lokalnie przez `claude -p` w ramach mojej subskrypcji Pro — bez klucza API i bez haseł na GitHubie. Harmonogram zadań uruchamia skrypt codziennie o 8:00. Vercel tylko czyta gotowe wyniki.”
