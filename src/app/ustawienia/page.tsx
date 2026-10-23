@@ -1,6 +1,6 @@
 import { SettingsForm } from "@/components/SettingsForm";
 import { SiteHeader } from "@/components/SiteHeader";
-import { getCategories } from "@/lib/supabase";
+import { getCategories, getFormGroups } from "@/lib/supabase";
 import { createSessionClient } from "@/lib/supabase-server";
 
 export const metadata = { title: "Ustawienia · PrzepisFK" };
@@ -10,10 +10,11 @@ export default async function SettingsPage() {
   const { data } = await supabase.auth.getUser();
   const user = data.user!; // proxy (src/proxy.ts) wpuszcza tu tylko zalogowanych
 
-  const [categories, { data: chosen }, { data: profile }] = await Promise.all([
+  const [categories, formGroups, { data: chosen }, { data: profile }] = await Promise.all([
     getCategories(),
+    getFormGroups(),
     supabase.from("user_categories").select("category_id").eq("user_id", user.id),
-    supabase.from("profiles").select("email_frequency, keywords").eq("id", user.id).single(),
+    supabase.from("profiles").select("email_frequency, keywords, form_groups").eq("id", user.id).single(),
   ]);
 
   return (
@@ -27,6 +28,8 @@ export default async function SettingsPage() {
           selected={(chosen ?? []).map((c) => c.category_id)}
           frequency={profile?.email_frequency ?? "none"}
           keywords={profile?.keywords ?? []}
+          formGroups={[...formGroups.keys()].sort((a, b) => a.localeCompare(b, "pl"))}
+          selectedGroups={profile?.form_groups ?? []}
         />
       </main>
     </div>

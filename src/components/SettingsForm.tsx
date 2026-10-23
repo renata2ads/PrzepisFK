@@ -4,7 +4,7 @@ import { useActionState } from "react";
 import { deleteAccount, saveSettings } from "@/app/ustawienia/actions";
 import type { Category } from "@/lib/supabase";
 
-type Props = { categories: Category[]; selected: number[]; frequency: string; keywords: string[] };
+type Props = { categories: Category[]; selected: number[]; frequency: string; keywords: string[]; formGroups: string[]; selectedGroups: string[] };
 
 const FREQ = [
   { value: "none", label: "Nie wysyłaj" },
@@ -12,7 +12,7 @@ const FREQ = [
   { value: "weekly", label: "Raz w tygodniu" },
 ];
 
-export function SettingsForm({ categories, selected, frequency, keywords }: Props) {
+export function SettingsForm({ categories, selected, frequency, keywords, formGroups, selectedGroups }: Props) {
   const [state, formAction, pending] = useActionState(saveSettings, {});
 
   return (
@@ -30,6 +30,21 @@ export function SettingsForm({ categories, selected, frequency, keywords }: Prop
             ))}
           </div>
         </fieldset>
+
+        {formGroups.length > 0 && (
+          <fieldset>
+            <legend className="text-lg font-bold">Grupy druków</legend>
+            <p className="mt-1 text-sm text-[#5b6478]">Nowe wersje druków z tych grup (Druki Gofin) trafią do Twojego feedu i e-maila.</p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {formGroups.map((g) => (
+                <label key={g} className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 ring-1 ring-[#dde1ea] has-[:checked]:bg-[#fdeee4] has-[:checked]:ring-[#c2410c]">
+                  <input type="checkbox" name="druki" value={g} defaultChecked={selectedGroups.includes(g)} className="accent-[#c2410c]" />
+                  {g}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        )}
 
         <div>
           <label htmlFor="slowa" className="text-lg font-bold">Własne słowa kluczowe</label>

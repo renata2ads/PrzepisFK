@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArticleCard } from "@/components/ArticleCard";
 import { SiteHeader } from "@/components/SiteHeader";
+import { formArticleIds } from "@/lib/forms";
 import { keywordArticleIds, keywordsIn } from "@/lib/keywords";
 import { getArticles, getCategories, type Review } from "@/lib/supabase";
 import { createSessionClient } from "@/lib/supabase-server";
@@ -22,12 +23,13 @@ export default async function MyFeedPage({ searchParams }: Props) {
     getCategories(),
     supabase.from("user_categories").select("category_id").eq("user_id", user.id),
     supabase.from("bookmarks").select("article_id").eq("user_id", user.id),
-    supabase.from("profiles").select("keywords").eq("id", user.id).single(),
+    supabase.from("profiles").select("keywords, form_groups").eq("id", user.id).single(),
   ]);
   const chosenIds = (chosen ?? []).map((c) => c.category_id);
   const bookmarkIds = new Set((marks ?? []).map((m) => m.article_id));
   const keywords: string[] = profile?.keywords ?? [];
-  const keywordIds = await keywordArticleIds(supabase, keywords);
+  const formGroups: string[] = profile?.form_groups ?? [];
+  const [keywordIds, formIds] = await Promise.all([keywordArticleIds(supabase, keywords), formArticleIds(supabase, formGroups)]);
 
   // Wpisy z moich obszarów i oceny w moich obszarach → co czeka na weryfikację, co wpływa
   const [{ data: links }, { data: myReviews }] = chosenIds.length
@@ -48,8 +50,8 @@ export default async function MyFeedPage({ searchParams }: Props) {
     view === "zapisane" ? await getArticles({ articleIds: [...bookmarkIds] })
     : view === "do-weryfikacji" ? (pendingIds.length ? await getArticles({ articleIds: pendingIds }) : [])
     : view === "wplywa" ? (affectsIds.length ? await getArticles({ articleIds: affectsIds }) : [])
-    : chosenIds.length || keywordIds.length
-      ? await getArticles({ articleIds: [...new Set([...(links ?? []).map((l) => l.article_id), ...keywordIds])] })
+    : chosenIds.length || keywordIds.length || formIds.length
+      ? await getArticles({ articleIds: [...new Set([...(links ?? []).map((l) => l.article_id), ...keywordIds, ...formIds])] })
       : [];
 
   const { data: reviewRows } = articles.length
@@ -75,10 +77,11 @@ export default async function MyFeedPage({ searchParams }: Props) {
       <main className="mx-auto max-w-3xl px-4 py-8 sm:px-10">
         <h1 className="text-2xl font-bold">Mój PrzepisFK</h1>
 
-        {(chosenIds.length > 0 || keywords.length > 0) && (
+        {(chosenIds.length > 0 || keywords.length > 0 || formGroups.length > 0) && (
           <p className="mt-1 text-sm text-[#5b6478]">
             Twoje obszary: {categories.filter((c) => chosenIds.includes(c.id)).map((c) => c.name).join(", ") || "brak"}
-            {keywords.length > 0 && <> · słowa kluczowe: {keywords.join(", ")}</>} ·{" "}
+            {keywords.length > 0 && <> · słowa kluczowe: {keywords.join(", ")}</>}
+            {formGroups.length > 0 && <> · druki: {formGroups.join(", ")}</>} ·{" "}
             <Link href="/ustawienia" className="text-[#c2410c] underline">zmień</Link>
           </p>
         )}
@@ -91,7 +94,7 @@ export default async function MyFeedPage({ searchParams }: Props) {
         </nav>
 
         <div className="mt-6 space-y-4">
-          {view !== "zapisane" && chosenIds.length === 0 && (view !== "feed" || keywords.length === 0) ? (
+          {view !== "zapisane" && chosenIds.length === 0 && (view !== "feed" || (keywords.length === 0 && formGroups.length === 0)) ? (
             <p className="rounded-lg bg-white p-6 text-center">
               Nie wybrano jeszcze obszarów.{" "}
               <Link href="/ustawienia" className="font-semibold text-[#c2410c] underline">Wybierz je w ustawieniach</Link>.

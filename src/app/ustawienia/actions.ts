@@ -39,7 +39,7 @@ export async function saveSettings(_: SettingsState, form: FormData): Promise<Se
 
   const upd = await supabase
     .from("profiles")
-    .update({ email_frequency: FREQUENCIES.includes(frequency) ? frequency : "none", keywords: parseKeywords(form.get("slowa")) })
+    .update({ email_frequency: FREQUENCIES.includes(frequency) ? frequency : "none", keywords: parseKeywords(form.get("slowa")), form_groups: form.getAll("druki").map(String).slice(0, 30) })
     .eq("id", userId);
   if (upd.error) return { error: "Nie udało się zapisać ustawień powiadomień." };
 

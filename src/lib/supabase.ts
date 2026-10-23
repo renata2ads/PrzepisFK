@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { FORMS_PREFIX } from "./forms";
 
 // Klient publiczny (klucz anon) — odczyt chroniony przez RLS
 export const supabase = createClient(
@@ -71,12 +72,23 @@ export async function getUpcoming({ from, to, categoryId }: { from: string; to: 
 }
 
 // Druki: nowe wersje druków ze źródeł „Druki · <grupa>” (grupa = nazwa źródła bez przedrostka)
-export const FORMS_PREFIX = "Druki · ";
+export { FORMS_PREFIX };
 const getFormSources = async () => {
   const { data, error } = await supabase.from("sources").select("id, name").like("name", `${FORMS_PREFIX}%`);
   if (error) throw error;
   return data;
 };
+
+// Grupy druków (do wyboru w Ustawieniach) i id ich źródeł
+export async function getFormGroups() {
+  const sources = await getFormSources();
+  const groups = new Map<string, number[]>();
+  for (const s of sources) {
+    const g = s.name.replace(FORMS_PREFIX, "");
+    groups.set(g, [...(groups.get(g) ?? []), s.id]);
+  }
+  return groups;
+}
 
 export async function getFormVersions() {
   const sources = await getFormSources();
