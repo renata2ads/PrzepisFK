@@ -1,23 +1,27 @@
 import Link from "next/link";
 import { ArticleCard } from "@/components/ArticleCard";
 import { SiteHeader } from "@/components/SiteHeader";
-import { getArticles, getCategories } from "@/lib/supabase";
+import { getArticles, getCategories, PAGE_SIZE } from "@/lib/supabase";
 import { createSessionClient } from "@/lib/supabase-server";
 
 export const revalidate = 300; // odśwież listę co 5 minut
 
-type Props = { searchParams: Promise<{ k?: string; q?: string; widok?: string }> };
+type Props = { searchParams: Promise<{ k?: string; q?: string; widok?: string; strona?: string }> };
 
 export default async function Home({ searchParams }: Props) {
-  const { k, q, widok } = await searchParams;
+  const { k, q, widok, strona } = await searchParams;
   const drafts = widok === "projekty";
+  const page = Math.max(1, Number(strona) || 1);
   const categories = await getCategories();
   const active = categories.find((c) => c.slug === k);
-  const articles = await getArticles({
+  const found = await getArticles({
     categoryIds: active ? [active.id] : undefined,
     query: q,
     stages: drafts ? ["draft"] : ["news", "act"],
+    page,
   });
+  const hasMore = found.length > PAGE_SIZE;
+  const articles = found.slice(0, PAGE_SIZE);
 
   // zalogowany widzi przyciski zakładek
   const supabase = await createSessionClient();
@@ -26,11 +30,12 @@ export default async function Home({ searchParams }: Props) {
     ? new Set((await supabase.from("bookmarks").select("article_id")).data?.map((b) => b.article_id))
     : null;
 
-  const href = ({ slug = active?.slug, view = widok }: { slug?: string; view?: string }) => {
+  const href = ({ slug = active?.slug, view = widok, toPage }: { slug?: string; view?: string; toPage?: number }) => {
     const p = new URLSearchParams();
     if (view) p.set("widok", view);
     if (slug) p.set("k", slug);
     if (q) p.set("q", q);
+    if (toPage && toPage > 1) p.set("strona", String(toPage));
     const s = p.toString();
     return s ? `/?${s}` : "/";
   };
@@ -101,6 +106,26 @@ export default async function Home({ searchParams }: Props) {
             articles.map((a) => <ArticleCard key={a.id} article={a} bookmarked={bookmarkIds?.has(a.id)} />)
           )}
         </div>
+
+        {(page > 1 || hasMore) && (
+          <nav aria-label="Strony" className="mt-6 flex items-center justify-between text-sm font-semibold">
+            {page > 1 ? (
+              <Link href={href({ toPage: page - 1 })} className="rounded-lg bg-white px-4 py-2 ring-1 ring-[#dde1ea] hover:ring-[#c2410c]">
+                ← Nowsze
+              </Link>
+            ) : (
+              <span />
+            )}
+            <span className="text-[#5b6478]">Strona {page}</span>
+            {hasMore ? (
+              <Link href={href({ toPage: page + 1 })} className="rounded-lg bg-white px-4 py-2 ring-1 ring-[#dde1ea] hover:ring-[#c2410c]">
+                Starsze wpisy →
+              </Link>
+            ) : (
+              <span />
+            )}
+          </nav>
+        )}
       </main>
 
       <footer className="px-4 pb-8 text-center text-xs text-[#5b6478]">

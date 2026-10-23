@@ -36,14 +36,18 @@ export async function getCategories() {
   return data as Category[];
 }
 
-type ArticleFilter = { categoryIds?: number[]; articleIds?: number[]; query?: string; stages?: Stage[] };
+export const PAGE_SIZE = 30;
 
-export async function getArticles({ categoryIds, articleIds, query, stages }: ArticleFilter) {
+type ArticleFilter = { categoryIds?: number[]; articleIds?: number[]; query?: string; stages?: Stage[]; page?: number };
+
+// Zwraca o jeden wpis więcej niż PAGE_SIZE — po nim poznajemy, że jest następna strona
+export async function getArticles({ categoryIds, articleIds, query, stages, page = 1 }: ArticleFilter) {
+  const from = (page - 1) * PAGE_SIZE;
   let req = supabase
     .from("articles")
     .select(ARTICLE_FIELDS)
     .order("published_at", { ascending: false, nullsFirst: false })
-    .limit(50);
+    .range(from, from + PAGE_SIZE);
 
   if (stages) req = req.in("stage", stages);
 
