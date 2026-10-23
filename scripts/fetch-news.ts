@@ -318,9 +318,11 @@ async function insertArticle(c: Candidate, fields: Record<string, unknown>) {
   return data.id as number;
 }
 
-// Pilne = wpływ na system i najwyżej 3 miesiące do wejścia w życie (tyle co najmniej trwa dostosowanie systemu)
+// Pilne = akt lub projekt z wpływem na system i najwyżej 3 miesiące do wejścia w życie
+// (tyle co najmniej trwa dostosowanie systemu); artykuły prasowe (RSS) nie bywają pilne
 const URGENT_MONTHS = 3;
-function urgency(priority: string, effectiveDate: string | null) {
+function urgency(priority: string, effectiveDate: string | null, press: boolean) {
+  if (press) return priority === "high" ? "medium" : priority;
   if (priority === "info" || !effectiveDate) return priority;
   const limit = new Date();
   limit.setMonth(limit.getMonth() + URGENT_MONTHS);
@@ -344,7 +346,7 @@ async function saveResult(c: Candidate, ai: AiResult, slugToId: Map<string, numb
     impact: ai.impact,
     system_impact: ai.system_impact ?? null,
     impact_types: (ai.impact_types ?? []).filter(isImpactType).slice(0, 3),
-    priority: urgency(isPriority(ai.priority ?? "") ? ai.priority! : "medium", effective_date),
+    priority: urgency(isPriority(ai.priority ?? "") ? ai.priority! : "medium", effective_date, c.source.kind === "rss"),
     form_link: ai.form ? `https://druki.gofin.pl/search/?search_form[phrase]=${encodeURIComponent(ai.form)}` : null,
     effective_date,
   };
@@ -513,14 +515,14 @@ function acquireLock() {
 async function refreshUrgency() {
   const { data, error } = await db
     .from("articles")
-    .select("id, priority, effective_date")
+    .select("id, priority, effective_date, sources(kind)")
     .eq("status", "done")
-    .not("effective_date", "is", null)
-    .neq("priority", "info");
+        .neq("priority", "info");
   if (error) return console.error(`  ✗ pilność: ${error.message}`);
   let changed = 0;
   for (const a of data) {
-    const priority = urgency(a.priority ?? "medium", a.effective_date);
+    const press = (a.sources as unknown as { kind: string } | null)?.kind === "rss";
+    const priority = urgency(a.priority ?? "medium", a.effective_date, press);
     if (priority === a.priority) continue;
     await db.from("articles").update({ priority }).eq("id", a.id);
     changed++;

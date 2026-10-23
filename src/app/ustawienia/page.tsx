@@ -8,12 +8,12 @@ export const metadata = { title: "Ustawienia · PrzepisFK" };
 export default async function SettingsPage() {
   const supabase = await createSessionClient();
   const { data } = await supabase.auth.getUser();
-  const user = data.user!; // middleware wpuszcza tu tylko zalogowanych
+  const user = data.user!; // proxy (src/proxy.ts) wpuszcza tu tylko zalogowanych
 
   const [categories, { data: chosen }, { data: profile }] = await Promise.all([
     getCategories(),
     supabase.from("user_categories").select("category_id").eq("user_id", user.id),
-    supabase.from("profiles").select("email_frequency").eq("id", user.id).single(),
+    supabase.from("profiles").select("email_frequency, keywords").eq("id", user.id).single(),
   ]);
 
   return (
@@ -26,6 +26,7 @@ export default async function SettingsPage() {
           categories={categories}
           selected={(chosen ?? []).map((c) => c.category_id)}
           frequency={profile?.email_frequency ?? "none"}
+          keywords={profile?.keywords ?? []}
         />
       </main>
     </div>

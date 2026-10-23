@@ -3,6 +3,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PRIORITY } from "../src/lib/impact";
+import { keywordArticleIds } from "../src/lib/keywords";
 
 const SITE = process.env.SITE_URL ?? "https://przepis-fk.vercel.app";
 const DISCORD_PER_RUN = 10;
@@ -126,7 +127,7 @@ async function notifyEmail(db: SupabaseClient) {
 
   const { data: profiles, error } = await db
     .from("profiles")
-    .select("id, email, email_frequency, last_email_at, created_at")
+    .select("id, email, email_frequency, last_email_at, created_at, keywords")
     .neq("email_frequency", "none");
   if (error) return console.error(`E-mail: ${error.message}`);
 
@@ -138,10 +139,12 @@ async function notifyEmail(db: SupabaseClient) {
 
     const { data: chosen } = await db.from("user_categories").select("category_id").eq("user_id", p.id);
     const categoryIds = (chosen ?? []).map((c) => c.category_id);
-    if (!categoryIds.length || !p.email) continue;
+    if ((!categoryIds.length && !p.keywords?.length) || !p.email) continue;
 
-    const { data: links } = await db.from("article_categories").select("article_id").in("category_id", categoryIds);
-    const ids = [...new Set((links ?? []).map((l) => l.article_id))];
+    const { data: links } = categoryIds.length
+      ? await db.from("article_categories").select("article_id").in("category_id", categoryIds)
+      : { data: [] };
+    const ids = [...new Set([...(links ?? []).map((l) => l.article_id), ...(await keywordArticleIds(db, p.keywords ?? []))])];
     if (!ids.length) continue;
 
     const { data: articles } = await db

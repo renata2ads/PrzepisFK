@@ -14,7 +14,7 @@ export async function createSessionClient() {
           try {
             toSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options));
           } catch {
-            // wywołane z komponentu serwerowego — sesję odświeża middleware
+            // wywołane z komponentu serwerowego — sesję odświeża proxy (src/proxy.ts)
           }
         },
       },

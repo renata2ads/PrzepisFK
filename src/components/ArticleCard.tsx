@@ -1,7 +1,8 @@
 import { toggleBookmark } from "@/app/ustawienia/actions";
-import type { Article } from "@/lib/supabase";
+import type { Article, Review } from "@/lib/supabase";
 import { IMPACT_TYPES, isImpactType, PRIORITY } from "@/lib/impact";
 import { trackedTopicsIn } from "@/lib/topics";
+import { ReviewPanel } from "./ReviewPanel";
 
 const PRIORITY_CLS = {
   high: "bg-red-700 text-white",
@@ -14,8 +15,18 @@ const STAGE_LABEL = { news: null, act: "Akt prawny", draft: "Projekt — jeszcze
 const dateFmt = new Intl.DateTimeFormat("pl-PL", { day: "numeric", month: "long", year: "numeric" });
 const formatDate = (d: string) => dateFmt.format(new Date(d));
 
-// bookmarked: undefined = niezalogowany (bez przycisku zakładki)
-export function ArticleCard({ article, bookmarked }: { article: Article; bookmarked?: boolean }) {
+// bookmarked: undefined = niezalogowany (bez przycisku zakładki); review: panel weryfikacji (tylko Mój PrzepisFK)
+export function ArticleCard({
+  article,
+  bookmarked,
+  review,
+  keywords = [],
+}: {
+  article: Article;
+  bookmarked?: boolean;
+  keywords?: string[]; // dopasowane słowa kluczowe użytkownika
+  review?: { reviews: Review[]; myCategoryIds: number[] };
+}) {
   const qa = [...article.article_qa].sort((a, b) => a.sort - b.sort);
   const tracked = trackedTopicsIn(`${article.title} ${article.summary ?? ""}`);
   const stage = STAGE_LABEL[article.stage];
@@ -24,7 +35,7 @@ export function ArticleCard({ article, bookmarked }: { article: Article; bookmar
     <article
       className={`rounded-lg bg-white p-5 shadow-sm sm:p-6 ${tracked.length ? "ring-2 ring-[#c2410c]" : "ring-1 ring-[#dde1ea]"}`}
     >
-      {(tracked.length > 0 || stage || article.priority) && (
+      {(tracked.length > 0 || stage || article.priority || keywords.length > 0) && (
         <div className="mb-2 flex flex-wrap gap-2 text-xs font-bold uppercase tracking-wide">
           {article.priority && (
             <span className={`rounded px-2 py-0.5 ${PRIORITY_CLS[article.priority]}`} title={PRIORITY[article.priority].label}>
@@ -33,6 +44,9 @@ export function ArticleCard({ article, bookmarked }: { article: Article; bookmar
           )}
           {tracked.map((t) => (
             <span key={t} className="rounded bg-[#c2410c] px-2 py-0.5 text-white">★ {t}</span>
+          ))}
+          {keywords.map((k) => (
+            <span key={k} className="rounded bg-[#14213d]/10 px-2 py-0.5 normal-case text-[#14213d]">🔑 {k}</span>
           ))}
           {stage && (
             <span className={`rounded px-2 py-0.5 ${article.stage === "draft" ? "bg-amber-100 text-amber-900" : "bg-[#14213d] text-white"}`}>
@@ -109,6 +123,8 @@ export function ArticleCard({ article, bookmarked }: { article: Article; bookmar
           </dl>
         </details>
       )}
+
+      {review && <ReviewPanel article={article} reviews={review.reviews} myCategoryIds={review.myCategoryIds} />}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-[#5b6478]">

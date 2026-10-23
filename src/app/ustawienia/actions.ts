@@ -8,6 +8,16 @@ export type SettingsState = { error?: string; info?: string };
 
 const FREQUENCIES = ["none", "daily", "weekly"];
 
+// „JPK_MAG, Rb-27S; ksef” → ["JPK_MAG", "Rb-27S", "ksef"] — bez znaków składni filtra, max 20 słów
+const parseKeywords = (raw: FormDataEntryValue | null) => [
+  ...new Set(
+    String(raw ?? "")
+      .split(/[,;\n]/)
+      .map((k) => k.replace(/[%,()*\\]/g, "").trim().slice(0, 40))
+      .filter((k) => k.length >= 2),
+  ),
+].slice(0, 20);
+
 export async function saveSettings(_: SettingsState, form: FormData): Promise<SettingsState> {
   const supabase = await createSessionClient();
   const { data } = await supabase.auth.getUser();
@@ -29,7 +39,7 @@ export async function saveSettings(_: SettingsState, form: FormData): Promise<Se
 
   const upd = await supabase
     .from("profiles")
-    .update({ email_frequency: FREQUENCIES.includes(frequency) ? frequency : "none" })
+    .update({ email_frequency: FREQUENCIES.includes(frequency) ? frequency : "none", keywords: parseKeywords(form.get("slowa")) })
     .eq("id", userId);
   if (upd.error) return { error: "Nie udało się zapisać ustawień powiadomień." };
 

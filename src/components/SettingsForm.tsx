@@ -4,7 +4,7 @@ import { useActionState } from "react";
 import { deleteAccount, saveSettings } from "@/app/ustawienia/actions";
 import type { Category } from "@/lib/supabase";
 
-type Props = { categories: Category[]; selected: number[]; frequency: string };
+type Props = { categories: Category[]; selected: number[]; frequency: string; keywords: string[] };
 
 const FREQ = [
   { value: "none", label: "Nie wysyłaj" },
@@ -12,7 +12,7 @@ const FREQ = [
   { value: "weekly", label: "Raz w tygodniu" },
 ];
 
-export function SettingsForm({ categories, selected, frequency }: Props) {
+export function SettingsForm({ categories, selected, frequency, keywords }: Props) {
   const [state, formAction, pending] = useActionState(saveSettings, {});
 
   return (
@@ -30,6 +30,20 @@ export function SettingsForm({ categories, selected, frequency }: Props) {
             ))}
           </div>
         </fieldset>
+
+        <div>
+          <label htmlFor="slowa" className="text-lg font-bold">Własne słowa kluczowe</label>
+          <p className="mt-1 text-sm text-[#5b6478]">
+            Wpisy z tymi słowami trafią do Twojego feedu i e-maila, nawet spoza wybranych obszarów. Oddziel przecinkami, do 20 słów.
+          </p>
+          <input
+            id="slowa"
+            name="slowa"
+            defaultValue={keywords.join(", ")}
+            placeholder="np. Rb-27S, JPK_MAG, MT940, PIT-11"
+            className="mt-2 w-full rounded-lg border border-[#dde1ea] px-3 py-2"
+          />
+        </div>
 
         <fieldset>
           <legend className="text-lg font-bold">E-mail z nowymi wpisami</legend>
