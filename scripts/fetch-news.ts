@@ -72,7 +72,7 @@ const db = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false
 
 // ---------- typy ----------
 
-type Source = { id: number; name: string; url: string; kind: "rss" | "eli" | "sejm" | "manual" | "page" | "list" | "forms"; category_slug?: string | null };
+type Source = { id: number; name: string; url: string; kind: "rss" | "eli" | "sejm" | "manual" | "page" | "list" | "forms"; category_slug?: string | null; recursive?: boolean | null };
 type Stage = "news" | "act" | "draft";
 type Category = { id: number; slug: string; name: string; description: string | null };
 type Candidate = {
@@ -203,6 +203,19 @@ async function fromList(source: Source): Promise<Candidate[]> {
 // Dział Druków Gofin (np. sprawozdawczość budżetowa): każda nowa wersja druku to osobny wpis.
 // Strona druku ma tabelę „Wersje druku” z datą „Okres od”; bierzemy wersje z ostatnich 90 dni i przyszłe.
 const checkedForms = new Set<string>();
+
+// Działy z menu głównego Druków Gofin (do decyzji, czy źródło przeszukiwać w głąb)
+async function formsMenuOf(sources: Source[]) {
+  const origin = sources.find((s) => s.kind === "forms")?.url;
+  if (!origin) return new Set<string>();
+  try {
+    const res = await fetch(new URL(origin).origin, { headers: { "User-Agent": "PrzepisFK/1.0" }, signal: AbortSignal.timeout(30000) });
+    const html = await res.text();
+    return new Set([...html.matchAll(/href="(\/dzial\/\d+\/[a-z0-9-]+)"/g)].map((m) => new URL(m[1], origin).toString()));
+  } catch {
+    return new Set<string>();
+  }
+}
 async function fromForms(source: Source): Promise<Candidate[]> {
   const get = async (url: string) => {
     const res = await fetch(url, { headers: { "User-Agent": "PrzepisFK/1.0" }, signal: AbortSignal.timeout(30000) });
@@ -221,7 +234,7 @@ async function fromForms(source: Source): Promise<Candidate[]> {
   const found = new Set<string>();
   const visited = new Set<string>();
   let level = [source.url];
-  for (let depth = 0; depth < (menu.has(source.url) ? 3 : 1) && level.length; depth++) {
+  for (let depth = 0; depth < ((source.recursive ?? menu.has(source.url)) ? 3 : 1) && level.length; depth++) {
     const next: string[] = [];
     for (const section of level) {
       if (visited.has(section)) continue;
@@ -633,7 +646,7 @@ async function main() {
   console.log(`PrzepisFK: limit ${LIMIT}, ostatnie ${DAYS} dni, model ${CLAUDE_MODEL}`);
 
   const [{ data: sources, error: e1 }, { data: categories, error: e2 }] = await Promise.all([
-    db.from("sources").select("id, name, url, kind, active, category_slug").order("id"),
+    db.from("sources").select("id, name, url, kind, active, category_slug, recursive").order("id"),
     db.from("categories").select("id, slug, name, description").order("sort"),
   ]);
   if (e1 || e2) throw e1 ?? e2;
@@ -646,7 +659,12 @@ async function main() {
 
   // 1. Pobierz wpisy ze wszystkich źródeł
   let candidates: Candidate[] = [];
-  for (const s of (sources as (Source & { active: boolean })[]).filter((x) => x.active)) {
+  // druki: najpierw poddziały bez zagłębiania — szczegółowa grupa (np. JPK_KR) wygrywa z ogólną (Rachunkowość)
+  const active = (sources as (Source & { active: boolean })[]).filter((x) => x.active);
+  const formsMenu = await formsMenuOf(active);
+  const deep = (x: Source) => x.kind === "forms" && (x.recursive ?? formsMenu.has(x.url));
+  active.sort((a, b) => Number(deep(a)) - Number(deep(b))); // sort stabilny — reszta źródeł w kolejności id
+  for (const s of active) {
     try {
       const items =
         s.kind === "eli" ? await fromEli(s)
