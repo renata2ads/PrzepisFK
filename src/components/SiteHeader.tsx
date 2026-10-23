@@ -13,6 +13,7 @@ export async function SiteHeader({ subtitle = true }: { subtitle?: boolean }) {
             PrzepisFK
           </Link>
           <nav className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+            <Link href="/terminarz" className="hover:underline">Terminarz</Link>
             {user ? (
               <>
                 <Link href="/moj-feed" className="font-semibold hover:underline">Mój PrzepisFK</Link>

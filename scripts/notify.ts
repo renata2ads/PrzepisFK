@@ -2,6 +2,7 @@
 // Uruchamiane z fetch-news.ts albo osobno: npm run fetch -- --powiadomienia
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { PRIORITY } from "../src/lib/impact";
 
 const SITE = process.env.SITE_URL ?? "https://przepis-fk.vercel.app";
 const DISCORD_PER_RUN = 10;
@@ -13,6 +14,8 @@ type Row = {
   title: string;
   summary: string | null;
   impact: string | null;
+  system_impact: string | null;
+  priority: "high" | "medium" | "info" | null;
   stage: string;
   created_at: string;
   categories: { name: string }[];
@@ -38,7 +41,7 @@ async function notifyDiscord(db: SupabaseClient) {
 
   const { data, error } = await db
     .from("articles")
-    .select("id, url, title, summary, impact, stage, created_at, categories(name)")
+    .select("id, url, title, summary, impact, system_impact, priority, stage, created_at, categories(name)")
     .eq("status", "done")
     .is("discord_sent_at", null)
     .order("created_at")
@@ -56,8 +59,15 @@ async function notifyDiscord(db: SupabaseClient) {
           {
             title: `${STAGE[a.stage] ?? ""}${a.title}`.slice(0, 256),
             url: a.url,
-            description: [a.summary, a.impact && `**Co to zmienia:** ${a.impact}`].filter(Boolean).join("\n\n").slice(0, 3500),
-            color: 0xc2410c,
+            description: [
+              a.priority && `**${PRIORITY[a.priority].label}**`,
+              a.summary,
+              a.system_impact && `**Wpływ na system:** ${a.system_impact}`,
+            ]
+              .filter(Boolean)
+              .join("\n\n")
+              .slice(0, 3500),
+            color: a.priority === "high" ? 0xb91c1c : a.priority === "info" ? 0x9ca3af : 0xc2410c,
             footer: { text: a.categories.map((c) => c.name).join(" · ") || "PrzepisFK" },
           },
         ],
@@ -85,10 +95,10 @@ function emailHtml(articles: Row[], frequency: string) {
     .map(
       (a) => `
       <tr><td style="padding:16px 0;border-bottom:1px solid #dde1ea">
-        <div style="font-size:12px;color:#c2410c;font-weight:600">${esc(STAGE[a.stage] ?? "")}${esc(a.categories.map((c) => c.name).join(" · "))}</div>
+        <div style="font-size:12px;color:#c2410c;font-weight:600">${a.priority === "high" ? '<span style="background:#b91c1c;color:#fff;padding:1px 6px;border-radius:3px;margin-right:6px">PILNE</span>' : ""}${esc(STAGE[a.stage] ?? "")}${esc(a.categories.map((c) => c.name).join(" · "))}</div>
         <a href="${esc(a.url)}" style="display:block;margin-top:4px;font-size:17px;font-weight:700;color:#14213d;text-decoration:none">${esc(a.title)}</a>
         ${a.summary ? `<p style="margin:6px 0 0;font-size:14px;line-height:1.5;color:#14213d">${esc(a.summary)}</p>` : ""}
-        ${a.impact ? `<p style="margin:6px 0 0;padding:6px 10px;border-left:3px solid #c2410c;background:#fdeee4;font-size:13px;color:#14213d"><b>Co to zmienia:</b> ${esc(a.impact)}</p>` : ""}
+        ${a.system_impact ? `<p style="margin:6px 0 0;padding:6px 10px;border-left:3px solid #14213d;background:#e9ecf2;font-size:13px;color:#14213d"><b>Wpływ na system:</b> ${esc(a.system_impact)}</p>` : ""}
       </td></tr>`,
     )
     .join("");
@@ -136,13 +146,15 @@ async function notifyEmail(db: SupabaseClient) {
 
     const { data: articles } = await db
       .from("articles")
-      .select("id, url, title, summary, impact, stage, created_at, categories(name)")
+      .select("id, url, title, summary, impact, system_impact, priority, stage, created_at, categories(name)")
       .eq("status", "done")
       .gt("created_at", last)
       .in("id", ids.slice(-500))
       .order("created_at", { ascending: false })
       .limit(30);
     if (!articles?.length) continue;
+    const rank = { high: 0, medium: 1, info: 2 } as Record<string, number>;
+    articles.sort((x, y) => (rank[x.priority ?? "medium"] ?? 1) - (rank[y.priority ?? "medium"] ?? 1)); // pilne na górze
 
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",

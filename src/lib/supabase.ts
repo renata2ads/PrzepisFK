@@ -22,18 +22,42 @@ export type Article = {
   effective_date: string | null;
   form_link: string | null;
   stage: Stage;
+  system_impact: string | null;
+  impact_types: string[];
+  priority: "high" | "medium" | "info" | null;
   sources: { name: string } | null;
   categories: { slug: string; name: string }[];
   article_qa: { question: string; answer: string; sort: number }[];
 };
 
 const ARTICLE_FIELDS =
-  "id, url, title, published_at, summary, impact, effective_date, form_link, stage, sources(name), categories(slug, name), article_qa(question, answer, sort)";
+  "id, url, title, published_at, summary, impact, effective_date, form_link, stage, system_impact, impact_types, priority, sources(name), categories(slug, name), article_qa(question, answer, sort)";
 
 export async function getCategories() {
   const { data, error } = await supabase.from("categories").select("id, slug, name").order("sort");
   if (error) throw error;
   return data as Category[];
+}
+
+// Terminarz: wpisy z datą wejścia w życie w podanym przedziale (rosnąco)
+export async function getUpcoming({ from, to, categoryId }: { from: string; to: string; categoryId?: number }) {
+  let req = supabase
+    .from("articles")
+    .select(ARTICLE_FIELDS)
+    .gte("effective_date", from)
+    .lte("effective_date", to)
+    .order("effective_date")
+    .limit(300);
+
+  if (categoryId) {
+    const { data: links, error } = await supabase.from("article_categories").select("article_id").eq("category_id", categoryId);
+    if (error) throw error;
+    req = req.in("id", links.map((l) => l.article_id));
+  }
+
+  const { data, error } = await req;
+  if (error) throw error;
+  return data as unknown as Article[];
 }
 
 export const PAGE_SIZE = 30;

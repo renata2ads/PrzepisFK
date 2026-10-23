@@ -13,6 +13,7 @@ import Parser from "rss-parser";
 import { extractText, getDocumentProxy } from "unpdf";
 import { trackedTopicsIn, TRACKED_TOPICS } from "../src/lib/topics";
 import { notify } from "./notify";
+import { IMPACT_TYPES, isImpactType, isPriority } from "../src/lib/impact";
 
 // ---------- ustawienia ----------
 
@@ -69,7 +70,7 @@ const db = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false
 
 type Source = { id: number; name: string; url: string; kind: "rss" | "eli" | "sejm" | "manual" | "page" };
 type Stage = "news" | "act" | "draft";
-type Category = { id: number; slug: string; name: string };
+type Category = { id: number; slug: string; name: string; description: string | null };
 type Candidate = {
   source: Source;
   url: string;
@@ -86,6 +87,9 @@ type AiResult = {
   impact: string;
   effective_date: string | null;
   form: string | null;
+  system_impact: string;
+  impact_types: string[];
+  priority: string;
   qa: { question: string; answer: string }[];
 };
 
@@ -218,7 +222,7 @@ const matchesKeywords = (c: Candidate) => {
 // ---------- Claude ----------
 
 function buildPrompt(c: Candidate, categories: Category[]) {
-  return `Jesteś asystentem głównej księgowej / skarbnika w jednostce samorządu terytorialnego (JST) lub jednostce budżetowej w Polsce — np. urząd miasta lub gminy, starostwo, szkoła, przedszkole, zarząd dróg, MOPS. Przeanalizuj wpis i odpowiedz WYŁĄCZNIE poprawnym JSON-em (bez komentarzy, bez bloku markdown).
+  return `Jesteś analitykiem przepisów u dostawcy oprogramowania finansowo-księgowego dla jednostek samorządu terytorialnego (JST) i jednostek budżetowych w Polsce (urzędy miast i gmin, starostwa, szkoły, przedszkola, zarządy dróg, MOPS). Twoje streszczenie trafia do księgowych JST oraz do kierowników produktu, którzy decydują, czy zmiana wymaga dostosowania systemu. Przeanalizuj wpis i odpowiedz WYŁĄCZNIE poprawnym JSON-em (bez komentarzy, bez bloku markdown).
 
 Tematy priorytetowe (zawsze relevant = true, jeśli wpis ich dotyczy): ${TRACKED_TOPICS.map((t) => t.label).join(", ")}.
 
@@ -228,16 +232,22 @@ Tytuł: ${c.title}
 Data: ${c.publishedAt?.toISOString().slice(0, 10) ?? "brak"}
 Treść: ${c.text || "(brak — oceniaj po tytule)"}
 
-Dostępne kategorie (slug: nazwa):
-${categories.map((k) => `- ${k.slug}: ${k.name}`).join("\n")}
+Obszary produktowe dostawcy oprogramowania dla JST (slug: nazwa — zakres):
+${categories.map((k) => `- ${k.slug}: ${k.name} — ${k.description ?? ""}`).join("\n")}
+
+Rodzaje wpływu na oprogramowanie (slug: opis):
+${Object.entries(IMPACT_TYPES).map(([k, v]) => `- ${k}: ${v}`).join("\n")}
 
 Zwróć JSON:
 {
   "title": "krótki, rzeczowy tytuł po polsku (do 120 znaków)",
   "relevant": true/false — true TYLKO gdy wpis ma praktyczne znaczenie dla JST lub jednostki budżetowej: rachunkowość budżetowa, sprawozdawczość (Rb, bilans), budżet i WPF, klasyfikacja budżetowa, finanse publiczne, VAT i KSeF w JST (centralizacja VAT), podatki i opłaty lokalne (JST jako organ podatkowy), płace i ZUS w sferze budżetowej (JST jako pracodawca), PIT po stronie płatnika (zaliczki od wynagrodzeń, skala i progi, koszty uzyskania, ulgi wpływające na zaliczki, PIT-11, PIT-4R, PIT-8AR, PIT-8C, terminy), oświata (subwencja, wynagrodzenia nauczycieli), zamówienia publiczne, dotacje i środki UE, kontrola RIO/NIK. false dla tematów dotyczących wyłącznie firm (CIT, estoński CIT, ulgi dla przedsiębiorców, JDG, kasy fiskalne), spraw wyłącznie osobistych (PCC, ulgi rozliczane tylko w zeznaniu rocznym podatnika, emerytury), polityki i porad życiowych,
-  "categories": ["slug", ...] — 1–2 najlepiej pasujące,
+  "categories": ["slug", ...] — 1–2 obszary produktowe, których zespół powinien sprawdzić zmianę ("inne" tylko gdy żaden nie pasuje),
   "summary": "2–3 zdania po polsku: co się zmienia",
   "impact": "1–2 zdania: co to zmienia w praktyce dla księgowości / kadr JST lub jednostki budżetowej",
+  "system_impact": "1–2 zdania z perspektywy kierownika produktu systemu dziedzinowego dla JST: co konkretnie sprawdzić lub zmienić w oprogramowaniu (np. nowa wersja struktury XML, nowe pozycje w słowniku klasyfikacji, zmiana algorytmu naliczania, nowy wzór sprawozdania); jeśli zmiana nie wymaga zmian w systemie — napisz to",
+  "impact_types": ["slug", ...] — 0–3 rodzaje wpływu z listy wyżej (pusta lista, gdy brak wpływu na system),
+  "priority": "high" | "medium" | "info" — high: zmiana obowiązkowa wymagająca dostosowania systemu z konkretnym terminem; medium: prawdopodobny wpływ, wymaga weryfikacji; info: brak wpływu na system lub tylko informacja,
   "effective_date": "RRRR-MM-DD" albo null — data wejścia w życie, tylko jeśli wynika z treści (dla projektu ustawy: planowana data, jeśli podana),
   "form": "symbol druku" albo null — tylko gdy wpis dotyczy konkretnego formularza / deklaracji / sprawozdania (np. "VAT-R", "PIT-11", "PIT-4R", "PIT-8AR", "Rb-27S", "JPK_V7M", "ZUS DRA"),
   "qa": [{"question": "Kogo dotyczy?", "answer": "..."}, {"question": "Od kiedy?", "answer": "..."}, {"question": "Co muszę zrobić?", "answer": "..."}]
@@ -298,6 +308,9 @@ async function saveResult(c: Candidate, ai: AiResult, slugToId: Map<string, numb
     status: "done",
     summary: ai.summary,
     impact: ai.impact,
+    system_impact: ai.system_impact ?? null,
+    impact_types: (ai.impact_types ?? []).filter(isImpactType).slice(0, 3),
+    priority: isPriority(ai.priority ?? "") ? ai.priority : "medium",
     form_link: ai.form ? `https://druki.gofin.pl/search/?search_form[phrase]=${encodeURIComponent(ai.form)}` : null,
     effective_date: /^\d{4}-\d{2}-\d{2}$/.test(ai.effective_date ?? "") ? ai.effective_date : null,
   };
@@ -463,7 +476,7 @@ async function main() {
 
   const [{ data: sources, error: e1 }, { data: categories, error: e2 }] = await Promise.all([
     db.from("sources").select("id, name, url, kind, active"),
-    db.from("categories").select("id, slug, name").order("sort"),
+    db.from("categories").select("id, slug, name, description").order("sort"),
   ]);
   if (e1 || e2) throw e1 ?? e2;
   const slugToId = new Map(categories!.map((k) => [k.slug, k.id]));

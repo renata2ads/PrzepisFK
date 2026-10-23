@@ -1,6 +1,13 @@
 import { toggleBookmark } from "@/app/ustawienia/actions";
 import type { Article } from "@/lib/supabase";
+import { IMPACT_TYPES, isImpactType, PRIORITY } from "@/lib/impact";
 import { trackedTopicsIn } from "@/lib/topics";
+
+const PRIORITY_CLS = {
+  high: "bg-red-700 text-white",
+  medium: "bg-amber-100 text-amber-900",
+  info: "bg-gray-100 text-gray-700",
+} as const;
 
 const STAGE_LABEL = { news: null, act: "Akt prawny", draft: "Projekt — jeszcze nie obowiązuje" } as const;
 
@@ -17,8 +24,13 @@ export function ArticleCard({ article, bookmarked }: { article: Article; bookmar
     <article
       className={`rounded-lg bg-white p-5 shadow-sm sm:p-6 ${tracked.length ? "ring-2 ring-[#c2410c]" : "ring-1 ring-[#dde1ea]"}`}
     >
-      {(tracked.length > 0 || stage) && (
+      {(tracked.length > 0 || stage || article.priority) && (
         <div className="mb-2 flex flex-wrap gap-2 text-xs font-bold uppercase tracking-wide">
+          {article.priority && (
+            <span className={`rounded px-2 py-0.5 ${PRIORITY_CLS[article.priority]}`} title={PRIORITY[article.priority].label}>
+              {PRIORITY[article.priority].short}
+            </span>
+          )}
           {tracked.map((t) => (
             <span key={t} className="rounded bg-[#c2410c] px-2 py-0.5 text-white">★ {t}</span>
           ))}
@@ -51,6 +63,22 @@ export function ArticleCard({ article, bookmarked }: { article: Article; bookmar
         <div className="mt-3 border-l-4 border-[#c2410c] bg-[#fdeee4]/60 px-3 py-2 text-sm">
           <b>Co to zmienia: </b>
           {article.impact}
+        </div>
+      )}
+
+      {article.system_impact && (
+        <div className="mt-2 border-l-4 border-[#14213d] bg-[#e9ecf2]/70 px-3 py-2 text-sm">
+          <b>Wpływ na system: </b>
+          {article.system_impact}
+          {article.impact_types.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {article.impact_types.filter(isImpactType).map((t) => (
+                <span key={t} className="rounded bg-white px-2 py-0.5 text-xs font-semibold ring-1 ring-[#dde1ea]">
+                  {IMPACT_TYPES[t]}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
