@@ -285,7 +285,8 @@ async function readUrl(url: string) {
   if (type.includes("pdf") || url.toLowerCase().endsWith(".pdf")) {
     const pdf = await getDocumentProxy(new Uint8Array(await res.arrayBuffer()));
     const { text } = await extractText(pdf, { mergePages: true });
-    return { title: "", text: text.replace(/\s+/g, " ").slice(0, 8000) };
+    // bez kropek ze spisu treści, żeby w limicie znaków zmieściła się właściwa treść
+    return { title: "", text: text.replace(/(\s?\.){4,}\s*\d*/g, " ").replace(/\s+/g, " ").slice(0, 8000) };
   }
 
   const html = await res.text();
