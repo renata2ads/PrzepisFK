@@ -15,8 +15,7 @@ const groupOf = (a: Article) => (a.sources?.name ?? "").replace(FORMS_PREFIX, ""
 // Nowe wersje druków (Druki Gofin) w grupach: sprawozdania budżetowe, JPK, sprawozdania finansowe…
 export default async function FormsPage({ searchParams }: Props) {
   const { g } = await searchParams;
-  const all = await getFormVersions();
-  const groups = [...new Set(all.map(groupOf))].sort((a, b) => a.localeCompare(b, "pl"));
+  const { groups, articles: all } = await getFormVersions();
   const active = groups.includes(g ?? "") ? g : undefined;
   const articles = active ? all.filter((a) => groupOf(a) === active) : all;
 
@@ -46,7 +45,8 @@ export default async function FormsPage({ searchParams }: Props) {
 
         {articles.length === 0 ? (
           <p className="mt-6 rounded-lg bg-white p-6 text-center text-[#5b6478]">
-            Brak nowych wersji druków z ostatnich 90 dni — skrypt sprawdza je przy każdym porannym przebiegu.
+            {active ? `Brak nowych wersji w grupie „${active}”` : "Brak nowych wersji druków"} z ostatnich 90 dni — skrypt
+            sprawdza je przy każdym porannym przebiegu.
           </p>
         ) : (
           [...byGroup].map(([name, items]) => (

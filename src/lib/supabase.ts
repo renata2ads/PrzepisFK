@@ -75,7 +75,8 @@ export const FORMS_PREFIX = "Druki · ";
 export async function getFormVersions() {
   const { data: sources, error: e1 } = await supabase.from("sources").select("id, name").like("name", `${FORMS_PREFIX}%`);
   if (e1) throw e1;
-  if (!sources.length) return [];
+  const groups = [...new Set(sources.map((s) => s.name.replace(FORMS_PREFIX, "")))].sort((a, b) => a.localeCompare(b, "pl"));
+  if (!sources.length) return { groups, articles: [] as Article[] };
   const { data, error } = await supabase
     .from("articles")
     .select(ARTICLE_FIELDS)
@@ -83,7 +84,7 @@ export async function getFormVersions() {
     .order("effective_date", { ascending: false, nullsFirst: false })
     .limit(300);
   if (error) throw error;
-  return data as unknown as Article[];
+  return { groups, articles: data as unknown as Article[] };
 }
 
 export const PAGE_SIZE = 30;
