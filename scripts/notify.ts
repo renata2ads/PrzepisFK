@@ -42,7 +42,7 @@ async function notifyDiscord(db: SupabaseClient) {
 
   const { data, error } = await db
     .from("articles")
-    .select("id, url, title, summary, impact, system_impact, priority, stage, created_at, categories(name)")
+    .select("id, url, title, summary, impact, system_impact, priority, stage, created_at, categories!article_categories(name)")
     .eq("status", "done")
     .is("discord_sent_at", null)
     .order("created_at")
@@ -149,7 +149,7 @@ async function notifyEmail(db: SupabaseClient) {
 
     const { data: articles } = await db
       .from("articles")
-      .select("id, url, title, summary, impact, system_impact, priority, stage, created_at, categories(name)")
+      .select("id, url, title, summary, impact, system_impact, priority, stage, created_at, categories!article_categories(name)")
       .eq("status", "done")
       .gt("created_at", last)
       .in("id", ids.slice(-500))
