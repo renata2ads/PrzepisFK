@@ -68,7 +68,7 @@ npm run fetch -- --powiadomienia       # tylko Discord i e-mail
 
 Automat: `scripts/run-fetch.bat` w Harmonogramie zadań Windows (codziennie 8:00), log w `logs/fetch.log`. Blokada `logs/fetch.lock` nie pozwala uruchomić dwóch przebiegów naraz.
 
-Nowe źródło dodaje się wierszem w tabeli `sources` — rodzaj `rss` (kanał RSS/Atom), `eli` (Dziennik Ustaw), `sejm` (druki sejmowe) albo `page` (strona bez RSS, z której zbieramy nowe pliki PDF), `list` (strona z listą artykułów, np. GOFIN — Aktualności i sygnały) `rcl` (lista projektów rządowych z legislacja.gov.pl — tytuły filtrowane słowami kluczowymi aktów) albo `forms` (dział Druków Gofin — nowe wersje druków; nazwa „Druki · <grupa>”, `category_slug` = obszar, `recursive` = przeszukiwanie poddziałów). Sprawdzenie ok. 1280 druków wydłuża przebieg o ok. 7 minut.
+Nowe źródło dodaje się wierszem w tabeli `sources` — rodzaj `rss` (kanał RSS/Atom), `eli` (Dziennik Ustaw), `sejm` (druki sejmowe) albo `page` (strona bez RSS, z której zbieramy nowe pliki PDF), `list` (strona z listą artykułów, np. GOFIN — Aktualności i sygnały) `rcl` (lista projektów rządowych z legislacja.gov.pl — tytuły filtrowane słowami kluczowymi aktów), `wykaz` (wykazy prac legislacyjnych Rady Ministrów — CSV — i Ministra Finansów — Excel; projekty planowane), `crwde` (nowe wzory e-deklaracji MF w CRWDE na ePUAP, w zakładce Druki) albo `forms` (dział Druków Gofin — nowe wersje druków; nazwa „Druki · <grupa>”, `category_slug` = obszar, `recursive` = przeszukiwanie poddziałów). Sprawdzenie ok. 1280 druków wydłuża przebieg o ok. 7 minut.
 
 ## Ograniczenia
 

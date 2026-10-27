@@ -8,6 +8,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { inflateRawSync } from "node:zlib";
 import { createClient } from "@supabase/supabase-js";
 import Parser from "rss-parser";
 import { extractText, getDocumentProxy } from "unpdf";
@@ -72,7 +73,7 @@ const db = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false
 
 // ---------- typy ----------
 
-type Source = { id: number; name: string; url: string; kind: "rss" | "eli" | "sejm" | "manual" | "page" | "list" | "forms" | "rcl"; category_slug?: string | null; recursive?: boolean | null };
+type Source = { id: number; name: string; url: string; kind: "rss" | "eli" | "sejm" | "manual" | "page" | "list" | "forms" | "rcl" | "wykaz" | "crwde"; category_slug?: string | null; recursive?: boolean | null };
 type Stage = "news" | "act" | "draft";
 type Category = { id: number; slug: string; name: string; description: string | null };
 type Candidate = {
@@ -182,6 +183,153 @@ async function fromRcl(source: Source): Promise<Candidate[]> {
     });
   }
   return found;
+}
+
+// Wykazy prac legislacyjnych — projekty dopiero planowane, zanim trafią na legislacja.gov.pl:
+//   Rada Ministrów (gov.pl/web/premier/wplip-rm) — rejestr gov.pl z plikiem CSV,
+//   Minister Finansów (gov.pl/web/finanse/wykaz-prac-legislacyjnych) — Excel „Akty wpisane do Wykazu…”.
+// Bierzemy pozycje w toku (bez zrealizowanych, opublikowanych i wycofanych) z tytułem pasującym do LAW_KEYWORDS.
+type WykazRow = { nr: string; title: string; text: string; url: string | null; date: Date | null; done: boolean };
+async function fromWykaz(source: Source): Promise<Candidate[]> {
+  const get = async (url: string) => {
+    const res = await fetch(url, { headers: { "User-Agent": "PrzepisFK/1.0" }, signal: AbortSignal.timeout(60000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res;
+  };
+  const html = await (await get(source.url)).text();
+  const csv = html.match(/\/register-file\/[^"']+\.csv/)?.[0];
+  const rows = csv ? wykazCsv(await (await get(new URL(csv, source.url).toString())).text()) : await wykazXlsx(html, source.url, get);
+  return rows
+    .filter((w) => !w.done && lawMatches(w.title))
+    .map((w) => ({
+      source,
+      url: w.url ?? `${source.url}#${encodeURIComponent(w.nr)}`,
+      title: w.title,
+      publishedAt: w.date ?? new Date(),
+      text: `Pozycja ${w.nr} z wykazu prac legislacyjnych (${source.name}) — projekt planowany, jeszcze bez tekstu. ${w.text}`.slice(0, 6000),
+      stage: "draft" as const,
+    }));
+}
+
+function wykazCsv(text: string): WykazRow[] {
+  // CSV ze średnikami, pola w cudzysłowach, z nowymi liniami w środku pól
+  const records: string[][] = [];
+  let row: string[] = [], field = "", quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (ch === '"') quoted = false;
+      else field += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ";") { row.push(field); field = ""; }
+    else if (ch === "\n") { row.push(field.replace(/\r$/, "")); records.push(row); row = []; field = ""; }
+    else field += ch;
+  }
+  const [head, ...data] = records;
+  const col = (name: string) => head.findIndex((h) => h.replace(/^﻿/, "").startsWith(name));
+  const [nr, title, goal, essence, status, date, link, organ] =
+    ["Numer projektu", "Tytuł", "Cele projektu", "Istota rozwiązań", "Status realizacji", "Data publikacji", "Podgląd", "Organ odpowiedzialny za"].map(col);
+  return data.filter((r) => r[title]).map((r) => ({
+    nr: r[nr],
+    title: r[title].replace(/\s+POPRZEDNI TYTUŁ:[\s\S]*$/, "").trim(),
+    text: `Organ: ${r[organ] ?? "?"}. Cele: ${r[goal] ?? ""} Istota: ${r[essence] ?? ""}`,
+    url: r[link]?.startsWith("http") ? r[link] : null,
+    date: r[date] ? new Date(r[date].replace(" ", "T")) : null,
+    done: /zrealizowany|wycofany/i.test(r[status] ?? ""),
+  }));
+}
+
+async function wykazXlsx(html: string, base: string, get: (url: string) => Promise<Response>): Promise<WykazRow[]> {
+  // właściwy plik rozpoznajemy po nazwie z nagłówka Content-Disposition („Akty_wpisane_do_Wykazu…”)
+  for (const href of new Set(html.match(/\/attachment\/[0-9a-f-]{36}/g) ?? [])) {
+    const res = await get(new URL(href, base).toString());
+    const name = decodeURIComponent(res.headers.get("content-disposition") ?? "");
+    if (!/akty_wpisane/i.test(name)) { await res.body?.cancel(); continue; }
+    const files = unzip(Buffer.from(await res.arrayBuffer()));
+    const strings = [...(files.get("xl/sharedStrings.xml") ?? "").matchAll(/<si>([\s\S]*?)<\/si>/g)].map((m) => stripHtml(m[1]));
+    const sheet = files.get("xl/worksheets/sheet1.xml") ?? "";
+    const rows = [...sheet.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)].map((m) =>
+      [...m[1].matchAll(/<c ([^>]*)>(?:<f>[\s\S]*?<\/f>)?<v>([\s\S]*?)<\/v>/g)].map(([, attrs, v]) => (/t="s"/.test(attrs) ? strings[Number(v)] : v)),
+    );
+    // kolumny: L.p., numer, tytuł, przyczyny, istota, osoba, planowany termin, etap, odstąpiono, dane promulgacyjne
+    return rows.filter((r) => /^\d+\/\d{4}$/.test(r[1] ?? "")).map((r) => ({
+      nr: r[1],
+      title: r[2],
+      text: `Planowany termin: ${r[6] ?? "?"}. Etap: ${r[7] ?? "?"}. Przyczyny: ${r[3] ?? ""} Istota: ${r[4] ?? ""}`,
+      url: null,
+      date: null,
+      done: /opublikowan/i.test(r[7] ?? "") || /^tak/i.test(r[8] ?? ""),
+    }));
+  }
+  throw new Error("nie znaleziono pliku „Akty wpisane do Wykazu”");
+}
+
+// CRWDE (Centralne Repozytorium Wzorów Dokumentów Elektronicznych, ePUAP): nowe wzory e-deklaracji MF.
+// Tabela portalu WebSphere: pierwsze wejście daje sesję i formularz, ponowne wysłanie formularza z limitem 100
+// zwraca 100 najnowszych wzorów wszystkich instytucji (ok. 4 miesięcy) — bierzemy MF i druki ważne dla JST.
+const CRWDE_FORMS = /^(PIT-(4R|8AR|8C|11A?|40A|R|2A?|3)|IFT-\w+|VAT-\w+|ZAW-\w+|NIP-\w+|[ID][NRL]-\d+)[(\s/]/i;
+async function fromCrwde(source: Source): Promise<Candidate[]> {
+  const cookies = new Map<string, string>();
+  const open = async (url: string, body?: URLSearchParams) => {
+    const res = await fetch(url, {
+      method: body ? "POST" : "GET",
+      body,
+      headers: { "User-Agent": "PrzepisFK/1.0", Cookie: [...cookies].map(([k, v]) => `${k}=${v}`).join("; ") },
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    for (const c of res.headers.getSetCookie()) cookies.set(c.split("=")[0], c.split("=")[1].split(";")[0]);
+    return { html: await res.text(), url: res.url };
+  };
+  const first = await open(source.url);
+  const base = first.html.match(/<base href="([^"]+)"/)?.[1] ?? first.url;
+  const form = first.html.match(/<form id="mainform_Grid"[\s\S]*?action="([^"]+)"([\s\S]*?)<\/form>/);
+  if (!form) throw new Error("brak formularza tabeli wzorów");
+  const fields = new URLSearchParams();
+  for (const [input] of form[2].matchAll(/<input[^>]*>/g)) {
+    const name = input.match(/name=['"]([^'"]+)/)?.[1];
+    if (name && !/type=['"](checkbox|radio)/.test(input)) fields.set(name, decodeEntities(input.match(/value=['"]([^'"]*)/)?.[1] ?? ""));
+  }
+  for (const [k, v] of Object.entries({ Grid_gridlimit: "100", Grid_gridlimitchanged: "true", Grid_limitselect: "100", mode: "" })) fields.set(k, v);
+  const { html } = await open(new URL(decodeEntities(form[1]), base).toString(), fields);
+
+  const out: Candidate[] = [];
+  for (const [, row] of html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)) {
+    const [nr, date, institution, about] = [...row.matchAll(/title='([^']*)'/g)].map((m) => decodeEntities(m[1]));
+    if (!/^\d{4}\/\d{2}\/\d{2}\/\d+$/.test(nr ?? "") || !/MINISTERSTWO FINANS/i.test(institution) || !CRWDE_FORMS.test(about)) continue;
+    const [d, m, y] = date.split(".");
+    out.push({
+      source,
+      url: `https://crd.gov.pl/wzor/${nr}/`,
+      title: `Nowy wzór e-deklaracji ${about.split(" ")[0]} w CRWDE (opublikowany ${date})`,
+      publishedAt: new Date(`${y}-${m}-${d}`),
+      text: `Ministerstwo Finansów opublikowało w CRWDE nowy wzór dokumentu elektronicznego nr ${nr}: ${about}`,
+      stage: "news",
+    });
+  }
+  return out;
+}
+
+const decodeEntities = (t: string) =>
+  t.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&(\w+);/g, (e, n) => ({ amp: "&", quot: '"', lt: "<", gt: ">", nbsp: " ", oacute: "ó", Oacute: "Ó" })[n as string] ?? e);
+
+// Minimalne rozpakowanie ZIP (xlsx) — tylko metoda deflate/store, wystarczy dla plików Excela
+function unzip(buf: Buffer) {
+  const files = new Map<string, string>();
+  const end = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  let p = buf.readUInt32LE(end + 16);
+  for (let n = buf.readUInt16LE(end + 10); n > 0; n--) {
+    const method = buf.readUInt16LE(p + 10), size = buf.readUInt32LE(p + 20);
+    const nameLen = buf.readUInt16LE(p + 28), extra = buf.readUInt16LE(p + 30), comment = buf.readUInt16LE(p + 32);
+    const local = buf.readUInt32LE(p + 42), name = buf.toString("utf8", p + 46, p + 46 + nameLen);
+    const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+    const data = buf.subarray(start, start + size);
+    files.set(name, (method === 8 ? inflateRawSync(data) : data).toString("utf8"));
+    p += 46 + nameLen + extra + comment;
+  }
+  return files;
 }
 
 // Obserwowana strona bez RSS: każdy plik PDF na stronie to osobny wpis (schematy XSD pomijamy)
@@ -375,7 +523,7 @@ ${(await readUrl(c.url)).text}`.slice(0, 8000);
 
 const matchesKeywords = (c: Candidate) => {
   const t = `${c.title} ${c.text}`.toLowerCase();
-  return c.stage !== "news" || c.source.kind === "page" || c.source.kind === "forms" || KEYWORDS.some((k) => t.includes(k)) || trackedTopicsIn(t).length > 0;
+  return c.stage !== "news" || c.source.kind === "page" || c.source.kind === "forms" || c.source.kind === "crwde" || KEYWORDS.some((k) => t.includes(k)) || trackedTopicsIn(t).length > 0;
 };
 
 // ---------- Claude ----------
@@ -385,7 +533,7 @@ function buildPrompt(c: Candidate, categories: Category[]) {
 
 Tematy priorytetowe (zawsze relevant = true, jeśli wpis ich dotyczy): ${TRACKED_TOPICS.map((t) => t.label).join(", ")}.
 
-Wpis (${{ news: "artykuł prasowy", act: "akt prawny z Dziennika Ustaw", draft: "projekt aktu prawnego (ustawy w Sejmie albo rządowy projekt ustawy/rozporządzenia z legislacja.gov.pl) — jeszcze nie obowiązuje" }[c.stage]}):
+Wpis (${{ news: "artykuł prasowy", act: "akt prawny z Dziennika Ustaw", draft: "projekt aktu prawnego (ustawy w Sejmie albo rządowy projekt ustawy/rozporządzenia z legislacja.gov.pl albo pozycja z wykazu prac legislacyjnych, gdzie jest tylko plan i opis rozwiązań) — jeszcze nie obowiązuje" }[c.stage]}):
 Źródło: ${c.source.name}
 Tytuł: ${c.title}
 Data: ${c.publishedAt?.toISOString().slice(0, 10) ?? "brak"}
@@ -484,7 +632,7 @@ async function saveResult(c: Candidate, ai: AiResult, slugToId: Map<string, numb
     system_impact: ai.system_impact ?? null,
     impact_types: (ai.impact_types ?? []).filter(isImpactType).slice(0, 3),
     priority: urgency(isPriority(ai.priority ?? "") ? ai.priority! : "medium", effective_date, c.source.kind === "rss" || c.source.kind === "list"),
-    form_link: c.source.kind === "forms" ? c.url.split("#")[0] : ai.form ? `https://druki.gofin.pl/search/?search_form[phrase]=${encodeURIComponent(ai.form)}` : null,
+    form_link: c.source.kind === "forms" || c.source.kind === "crwde" ? c.url.split("#")[0] : ai.form ? `https://druki.gofin.pl/search/?search_form[phrase]=${encodeURIComponent(ai.form)}` : null,
     effective_date,
   };
   let id = existingId;
@@ -706,6 +854,8 @@ async function main() {
         : s.kind === "list" ? await fromList(s)
         : s.kind === "forms" ? await fromForms(s)
         : s.kind === "rcl" ? await fromRcl(s)
+        : s.kind === "wykaz" ? await fromWykaz(s)
+        : s.kind === "crwde" ? await fromCrwde(s)
         : await fromRss(s);
       const from = since(s.kind);
       const fresh = items.filter((c) => !c.publishedAt || c.publishedAt >= from);
