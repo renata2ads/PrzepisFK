@@ -72,7 +72,7 @@ const db = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false
 
 // ---------- typy ----------
 
-type Source = { id: number; name: string; url: string; kind: "rss" | "eli" | "sejm" | "manual" | "page" | "list" | "forms"; category_slug?: string | null; recursive?: boolean | null };
+type Source = { id: number; name: string; url: string; kind: "rss" | "eli" | "sejm" | "manual" | "page" | "list" | "forms" | "rcl"; category_slug?: string | null; recursive?: boolean | null };
 type Stage = "news" | "act" | "draft";
 type Category = { id: number; slug: string; name: string; description: string | null };
 type Candidate = {
@@ -155,6 +155,33 @@ async function fromSejm(source: Source): Promise<Candidate[]> {
       text: `Druk sejmowy nr ${p.number}. ${p.title}`,
       stage: "draft" as const,
     }));
+}
+
+// Projekty rządowe z legislacja.gov.pl (RCL) — rozporządzenia i założenia ustaw, zanim trafią do Sejmu.
+// Wiersz listy: tytuł (link /projekt/<id>), wnioskodawca, numer z wykazu, data utworzenia, data modyfikacji.
+const rclUrl = (url: string) => url.replace(/^(https?:\/\/legislacja\.gov\.pl\/projekt\/\d+).*$/, "$1");
+async function fromRcl(source: Source): Promise<Candidate[]> {
+  const res = await fetch(source.url, { headers: { "User-Agent": "PrzepisFK/1.0" }, signal: AbortSignal.timeout(30000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const html = await res.text();
+  const found: Candidate[] = [];
+  for (const [, row] of html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr\s*>/gi)) {
+    const link = row.match(/<a href="(\/projekt\/\d+)">([\s\S]*?)<\/a>/);
+    if (!link) continue;
+    const title = stripHtml(link[2]);
+    const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td\s*>/gi)].map((m) => stripHtml(m[1]));
+    const created = cells[3]?.match(/(\d{2})-(\d{2})-(\d{4})/);
+    if (!lawMatches(title)) continue;
+    found.push({
+      source,
+      url: `https://legislacja.gov.pl${link[1]}`,
+      title,
+      publishedAt: created ? new Date(`${created[3]}-${created[2]}-${created[1]}`) : new Date(),
+      text: `Projekt rządowy (legislacja.gov.pl). Wnioskodawca: ${cells[1] ?? "?"}. ${title}`,
+      stage: "draft",
+    });
+  }
+  return found;
 }
 
 // Obserwowana strona bez RSS: każdy plik PDF na stronie to osobny wpis (schematy XSD pomijamy)
@@ -328,6 +355,11 @@ async function enrichText(c: Candidate) {
     if (d) c.publishedAt = new Date(`${d[3]}-${d[2]}-${d[1]}`);
     return;
   }
+  if (c.source.kind === "rcl") {
+    c.text = `${c.text}
+${(await readUrl(c.url)).text}`.slice(0, 8000);
+    return;
+  }
   if (c.text.length >= 200 || c.source.kind !== "rss") return;
   try {
     const res = await fetch(c.url, { headers: { "User-Agent": "PrzepisFK/1.0" }, signal: AbortSignal.timeout(15000) });
@@ -353,7 +385,7 @@ function buildPrompt(c: Candidate, categories: Category[]) {
 
 Tematy priorytetowe (zawsze relevant = true, jeśli wpis ich dotyczy): ${TRACKED_TOPICS.map((t) => t.label).join(", ")}.
 
-Wpis (${{ news: "artykuł prasowy", act: "akt prawny z Dziennika Ustaw", draft: "projekt ustawy w Sejmie — jeszcze nie obowiązuje" }[c.stage]}):
+Wpis (${{ news: "artykuł prasowy", act: "akt prawny z Dziennika Ustaw", draft: "projekt aktu prawnego (ustawy w Sejmie albo rządowy projekt ustawy/rozporządzenia z legislacja.gov.pl) — jeszcze nie obowiązuje" }[c.stage]}):
 Źródło: ${c.source.name}
 Tytuł: ${c.title}
 Data: ${c.publishedAt?.toISOString().slice(0, 10) ?? "brak"}
@@ -521,6 +553,7 @@ async function processSubmissions(manual: Source | undefined, categories: Catego
     db.from("submissions").update({ status, message, article_id, processed_at: new Date().toISOString() }).eq("id", id);
 
   for (const sub of pending) {
+    sub.url = rclUrl(sub.url); // podstrona katalogu RCL → karta projektu, żeby nie dublować wpisu ze źródła RCL
     try {
       const { data: existing } = await db.from("articles").select("id, status").eq("url", sub.url).maybeSingle();
       if (existing) {
@@ -672,6 +705,7 @@ async function main() {
         : s.kind === "page" ? await baselinePage(s, await fromPage(s))
         : s.kind === "list" ? await fromList(s)
         : s.kind === "forms" ? await fromForms(s)
+        : s.kind === "rcl" ? await fromRcl(s)
         : await fromRss(s);
       const from = since(s.kind);
       const fresh = items.filter((c) => !c.publishedAt || c.publishedAt >= from);

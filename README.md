@@ -7,7 +7,7 @@ Radar zmian w przepisach dla **kierowników produktu** u dostawcy oprogramowania
 ## Co potrafi
 
 - **Zmiany w przepisach** — artykuły branżowe i akty prawne z Dziennika Ustaw, każdy ze streszczeniem AI, ramką „Co to zmienia”, datą wejścia w życie i pytaniami „Kogo dotyczy? / Od kiedy? / Co muszę zrobić?”.
-- **Projekty przepisów** — osobna zakładka z projektami ustaw skierowanymi do Sejmu (jeszcze nie obowiązują).
+- **Projekty przepisów** — osobna zakładka z projektami ustaw skierowanymi do Sejmu oraz rządowymi projektami ustaw i rozporządzeń z legislacja.gov.pl (jeszcze nie obowiązują).
 - **Obszary produktowe** — FK, Wydatki, Budżetowanie, WIND, KP, JPK, Inne (opis zakresu w tabeli `categories` — podpowiedź dla AI).
 - **Wpływ na system** — co sprawdzić w oprogramowaniu i rodzaj zmiany (struktury danych, wzory, słowniki, algorytmy, terminy, raporty, integracje).
 - **Pilność** — pilne są akty, projekty i dokumenty urzędowe z wpływem na system i najwyżej 3 miesiącami do wejścia w życie (data z API ELI); przeliczane przy każdym przebiegu.
@@ -68,7 +68,7 @@ npm run fetch -- --powiadomienia       # tylko Discord i e-mail
 
 Automat: `scripts/run-fetch.bat` w Harmonogramie zadań Windows (codziennie 8:00), log w `logs/fetch.log`. Blokada `logs/fetch.lock` nie pozwala uruchomić dwóch przebiegów naraz.
 
-Nowe źródło dodaje się wierszem w tabeli `sources` — rodzaj `rss` (kanał RSS/Atom), `eli` (Dziennik Ustaw), `sejm` (druki sejmowe) albo `page` (strona bez RSS, z której zbieramy nowe pliki PDF), `list` (strona z listą artykułów, np. GOFIN — Aktualności i sygnały) albo `forms` (dział Druków Gofin — nowe wersje druków; nazwa „Druki · <grupa>”, `category_slug` = obszar, `recursive` = przeszukiwanie poddziałów). Sprawdzenie ok. 1280 druków wydłuża przebieg o ok. 7 minut.
+Nowe źródło dodaje się wierszem w tabeli `sources` — rodzaj `rss` (kanał RSS/Atom), `eli` (Dziennik Ustaw), `sejm` (druki sejmowe) albo `page` (strona bez RSS, z której zbieramy nowe pliki PDF), `list` (strona z listą artykułów, np. GOFIN — Aktualności i sygnały) `rcl` (lista projektów rządowych z legislacja.gov.pl — tytuły filtrowane słowami kluczowymi aktów) albo `forms` (dział Druków Gofin — nowe wersje druków; nazwa „Druki · <grupa>”, `category_slug` = obszar, `recursive` = przeszukiwanie poddziałów). Sprawdzenie ok. 1280 druków wydłuża przebieg o ok. 7 minut.
 
 ## Ograniczenia
 
